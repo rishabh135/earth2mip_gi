@@ -49,7 +49,7 @@ from earth2mip.networks import get_model
 from earth2mip.schema import EnsembleRun, PerturbationStrategy
 from earth2mip.time_loop import TimeLoop
 
-logger = logging.getLogger("inference")
+# logger = logging.getLogger("inference")
 
 
 def get_checkpoint_path(rank, batch_id, path):
@@ -61,7 +61,7 @@ def get_checkpoint_path(rank, batch_id, path):
 def save_restart(restart, rank, batch_id, path):
     path = get_checkpoint_path(rank, batch_id, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    logger.info(f"Saving restart file to {path}.")
+    logging.info(f"Saving restart file to {path}.")
     torch.save(restart, path)
 
 
@@ -97,7 +97,9 @@ def run_ensembles(
     nc["time"].calendar = "standard"
 
     for batch_id in range(0, n_ensemble, batch_size):
-        logger.info(f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}")
+        logging.info(
+            f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}"
+        )
         batch_size = min(batch_size, n_ensemble - batch_id)
 
         x = x.repeat(batch_size, 1, 1, 1, 1)
@@ -108,7 +110,7 @@ def run_ensembles(
         # if restart_dir:
         #     path = get_checkpoint_path(rank, batch_id, restart_dir)
         #     # TODO use logger
-        #     logger.info(f"Loading from restart from {path}")
+        #     logging.info(f"Loading from restart from {path}")
         #     kwargs = torch.load(path)
         # else:
         #     kwargs = dict(
@@ -139,7 +141,7 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
-                logger.debug(f"Saving data at step {k} of {n_steps}.")
+                logging.debug(f"Saving data at step {k} of {n_steps}.")
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
                 update_netcdf(
                     regridder(data),
@@ -164,12 +166,17 @@ def run_ensembles(
 
 
 def main(config=None):
-    logging.basicConfig(level=logging.INFO)
+    logging.warning(
+        f" Inside inference_ensemble and using standard args with weather_model "
+    )
 
     if config is None:
         parser = argparse.ArgumentParser()
         parser.add_argument("config")
-        parser.add_argument("--weather_model", default=None)
+        parser.add_argument(
+            "--weather_model",
+            default=None,
+        )
         args = parser.parse_args()
         config = args.config
 
@@ -189,6 +196,11 @@ def main(config=None):
     #     config.weather_model = args.weather_model
 
     # Set up parallel
+
+    logging.warning(
+        f" Inside inference_ensemble setting parallel trainig with config {config} "
+    )
+
     DistributedManager.initialize()
     device = DistributedManager().device
     group = torch.distributed.group.WORLD
@@ -229,8 +241,7 @@ def get_initializer(
                 sigma=config.grf_noise_sigma,
                 alpha=config.grf_noise_alpha,
                 tau=config.grf_noise_tau,
-                device=device,
-            )
+            ).to(device)
         elif config.perturbation_strategy == PerturbationStrategy.bred_vector:
             noise = generate_bred_vector(
                 x,
@@ -278,7 +289,9 @@ def run_basic_inference(
     time: datetime,
 ):
     """Run a basic inference"""
-
+    logging.warning(
+        f" insider inference_ensemble using a basic inference model: {model}, data_source: {data_source}  time: {time} "
+    )
     x = initial_conditions.get_initial_condition_for_model(model, data_source, time)
 
     arrays = []
@@ -337,7 +350,7 @@ def run_inference(
     n_ensemble_global = config.ensemble_members
     n_ensemble = n_ensemble_global // dist.world_size
     if n_ensemble == 0:
-        logger.warning("World size is larger than global number of ensembles.")
+        logging.warning("World size is larger than global number of ensembles.")
         n_ensemble = n_ensemble_global
 
     # Set random seed
@@ -404,7 +417,7 @@ def run_inference(
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
-    logger.info(f"Ensemble forecast finished, saved to: {output_file_path}")
+    logging.info(f"Ensemble forecast finished, saved to: {output_file_path}")
 
 
 if __name__ == "__main__":

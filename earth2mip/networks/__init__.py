@@ -15,10 +15,12 @@
 # limitations under the License.
 
 import datetime
+import logging
+import os
 import sys
 import urllib
 import warnings
-from typing import Any, Callable, Iterator, Optional, Tuple
+from typing import Any, Callable, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -295,6 +297,10 @@ def _load_package_builtin(package, device, name) -> time_loop.TimeLoop:
 def _load_package(package, metadata, device) -> time_loop.TimeLoop:
     # Attempt to see if Earth2 MIP has entry point registered already
     # Read meta data from file if not present
+    package.path = "/scratch/gilbreth/gupt1075/fcnv2/earth2mip/earth2mip/networks/fcnv2"
+    logging.warning(
+        f" Inside load package  in new model {package.get('name')}   path {package.path} \n metadata {package.get('metadata.json')}  \n directory :  {dir(package)} "
+    )
     if metadata is None:
         local_path = package.get("metadata.json")
         with open(local_path) as f:
@@ -339,6 +345,15 @@ def get_model(
 
     """
     url = urllib.parse.urlparse(model)
+    # write out all arguments and attributes of registry object to logging file
+
+    logging.warning(
+        f" Model name inside init.get_model() {model}    path:     {registry.path}  \n     weight path: {registry.get_weight_path} \n { dir(registry) } "
+    )
+
+    logging.warning(f" >>>  url_scheme {url.scheme}  model: {model}")
+
+    logging.warning(f" Model name inside init.get_model metadata:  {metadata} ")
 
     if url.scheme == "e2mip":
         package = registry.get_model(model)

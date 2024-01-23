@@ -92,7 +92,6 @@ class SingleLevelCode:
 
 def parse_channel(channel: str) -> Union[PressureLevelCode, SingleLevelCode]:
     if channel in CHANNEL_TO_CODE:
-
         return SingleLevelCode(CHANNEL_TO_CODE[channel])
     else:
         code = CHANNEL_TO_CODE[channel[0]]
@@ -228,6 +227,7 @@ def _parse_files(
 def _download_codes(client, codes, time, d) -> xarray.DataArray:
     files = []
     format = "grib"
+    d = "/scratch/gilbreth/gupt1075/fcnv2/cds_ics"
 
     def download(arg):
         name, req = arg
@@ -236,6 +236,9 @@ def _download_codes(client, codes, time, d) -> xarray.DataArray:
         os.makedirs(dirname, exist_ok=True)
         filename = name + ".grib"
         path = os.path.join(dirname, filename)
+        logger.warning(
+            f" >> downloading from inside initial_conditions/cds.py dirname {dirname},   filenmae: {filename}, d: {d}, path: {path} "
+        )
         if not os.path.exists(path):
             logger.info(f"Data not found in cache. Downloading {name} to {path}")
             client.retrieve(name, req, path + ".tmp")

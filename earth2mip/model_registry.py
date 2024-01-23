@@ -181,7 +181,6 @@ def NGCDiagnosticPackage(
 
 
 def PanguPackage(root: str, seperator: str):
-
     name = root.split(seperator)[-1]
     if not os.path.isdir(root):
         logger.info(
@@ -225,7 +224,11 @@ class ModelRegistry:
     SEPERATOR: str = "/"
 
     def __init__(self, path: str):
+        path = "/scratch/gilbreth/gupt1075/fcnv2/earth2mip"
         self.path = path
+        logging.warning(
+            f" Inside model_registry settings and setting path as {self.path}, not linked to other_path "
+        )
 
     def list_models(self):
         return [os.path.basename(f) for f in filesystem.ls(self.path)]
