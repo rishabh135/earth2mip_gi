@@ -51,8 +51,7 @@ logging.warning(f" right now in {os.getcwd()} and creating .cdsapirc in  ")
 
 if not os.path.exists(cds_api):
     # uid = input("Enter in CDS UID (e.g. 123456): ")
-    uid = "262708"
-    key = "87969e83-ce6a-48aa-afc7-e354a87d7de1"
+
     # key = input("Enter your CDS API key (e.g. 12345678-1234-1234-1234-123456123456): ")
     # Write to config file for CDS library
     with open(cds_api, "w") as f:
