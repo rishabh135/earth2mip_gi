@@ -380,7 +380,9 @@ def run_inference(
             f.write(config.json())
 
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
-    output_file_path = os.path.join(output_path, f"ensemble_out_{group_rank}.nc")
+
+    nc_file_path = str(config["nc_file_path"]) + ".nc"
+    output_file_path = os.path.join(output_path, nc_file_path)
 
     with DS(output_file_path, "w", format="NETCDF4") as nc:
         # assign global attributes

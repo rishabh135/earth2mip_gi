@@ -8,6 +8,9 @@ from datetime import datetime
 import dotenv
 import xarray
 
+# (u'Cleveland, OH, US', (41.4994954, -81.6954088))
+
+
 # spec = importlib.util.spec_from_file_location(
 #     "earth2mip", "/scratch/gilbreth/gupt1075/fcnv2/earth2mip"
 # )
