@@ -5,6 +5,13 @@ import os
 import sys
 from datetime import datetime
 
+
+import configparser
+
+config = configparser.ConfigParser()		
+config.read("/scratch/gilbreth/gupt1075/fcnv2/config.ini")
+
+
 import dotenv
 import xarray
 from geopy import geocoders
@@ -45,8 +52,10 @@ logging.warning(f" right now in {os.getcwd()} and creating .cdsapirc in  ")
 
 if not os.path.exists(cds_api):
     # uid = input("Enter in CDS UID (e.g. 123456): ")
-    uid = "262708"
-    key = "87969e83-ce6a-48aa-afc7-e354a87d7de1"
+
+    uid = configur.get('login','uid')
+    key = configur.get('login','key')
+    
     # key = input("Enter your CDS API key (e.g. 12345678-1234-1234-1234-123456123456): ")
     # Write to config file for CDS library
     with open(cds_api, "w") as f:
@@ -55,9 +64,9 @@ if not os.path.exists(cds_api):
 
 
 config = {
-    "ensemble_members": 2,
+    "ensemble_members": 4,
     "noise_amplitude": 0.05,
-    "simulation_length": 4,
+    "simulation_length": 400,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -72,7 +81,7 @@ config = {
             }
         ],
     },
-    "output_path": "/scratch/gilbreth/gupt1075/fcnv2/output/z500_2",
+    "output_path": "/scratch/gilbreth/gupt1075/fcnv2/output/z500_2018_03_01",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
