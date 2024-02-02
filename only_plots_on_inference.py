@@ -123,8 +123,7 @@ nc_file_path = (
 
 
 config_str = json.dumps(config)
-inference_ensemble.main(config_str, nc_file_path)
-logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
+logging.warning(f" >>> Only plotting all the configuration as sent to inference_ensemble {config_str}  ")
 
 
 def open_ensemble(f, domain, chunks={"time": 1}):
