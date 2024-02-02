@@ -101,13 +101,14 @@ domains = config["weather_event"]["domains"][0]["name"]
 var_computed = config["weather_event"]["domains"][0]["diagnostics"][0]["channels"][0]
 
 
-config["nc_file_path"] = (
+nc_file_path = (
     f"var_{var_computed}_starting_at_{start_time}_ensemble_{config['simulation_length']}"
+    + ".nc"
 )
 
 
 config_str = json.dumps(config)
-inference_ensemble.main(config_str)
+inference_ensemble.main(config_str, nc_file_path)
 logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
 
 
@@ -123,12 +124,6 @@ logging.warning(
     f"Saving ensembled output as a nc file with domains: {domains} and var_computed {var_computed}"
 )
 ensemble_members = config["ensemble_members"]
-
-start_time = datetime.strptime(
-    config["weather_event"]["properties"]["start_time"], "%Y-%m-%d %H:%M:%S"
-).strftime("%Y_%m_%d")
-
-nc_file_path = str(config["nc_file_path"]) + ".nc"
 
 ds = open_ensemble(
     os.path.join(output_path, nc_file_path),

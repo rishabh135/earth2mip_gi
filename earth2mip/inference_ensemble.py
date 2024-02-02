@@ -165,7 +165,7 @@ def run_ensembles(
         #     )
 
 
-def main(config=None):
+def main(config=None, nc_file_path=None):
     logging.warning(
         f" Inside inference_ensemble and using standard args with weather_model "
     )
@@ -214,7 +214,7 @@ def main(config=None):
         config,
     )
     logging.info("Running inference")
-    run_inference(model, config, perturb, group)
+    run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
 
 
 def get_initializer(
@@ -316,6 +316,7 @@ def run_inference(
     config: EnsembleRun,
     perturb: Any = None,
     group: Any = None,
+    nc_file_path=None,
     progress: bool = True,
     # TODO add type hints
     data_source: Any = None,
@@ -381,7 +382,6 @@ def run_inference(
 
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
 
-    nc_file_path = str(config["nc_file_path"]) + ".nc"
     output_file_path = os.path.join(output_path, nc_file_path)
 
     with DS(output_file_path, "w", format="NETCDF4") as nc:
