@@ -55,9 +55,9 @@ if not os.path.exists(cds_api):
 
 
 config = {
-    "ensemble_members": 1,
+    "ensemble_members": 2,
     "noise_amplitude": 0.05,
-    "simulation_length": 2,
+    "simulation_length": 4,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -192,49 +192,49 @@ plt.savefig(f"{output_path}/new_york_{var_computed}.png")
 # to see what happens.
 
 # %%
-# plt.close("all")
-# fig = plt.figure(figsize=(15, 10))
-# plt.rcParams["figure.dpi"] = 100
-# proj = ccrs.OSGSB(central_longitude=nyc_lon, central_latitude=nyc_lat)
+plt.close("all")
+fig = plt.figure(figsize=(15, 10))
+plt.rcParams["figure.dpi"] = 100
+proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
 
-# data = ds.t2m[0, -1, :, :]
-# norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
-# ax = fig.add_subplot(131, projection=proj)
-# ax.set_title("First ensemble member t2m (K)")
-# img = ax.pcolormesh(
-#     ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
-# )
-# ax.coastlines(linewidth=1)
-# ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-# plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
-# gl = ax.gridlines(draw_labels=True, linestyle="--")
+data = ds.z500[0, -1, :, :]
+norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
+ax = fig.add_subplot(131, projection=proj)
+ax.set_title("First ensemble member z500 ")
+img = ax.pcolormesh(
+    ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
+)
+ax.coastlines(linewidth=1)
+ax.add_feature(countries, edgecolor="black", linewidth=0.25)
+plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+gl = ax.gridlines(draw_labels=True, linestyle="--")
 
-# data = ds.t2m[-1, -1, :, :]
-# norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
-# ax = fig.add_subplot(132, projection=proj)
-# plt.rcParams["figure.dpi"] = 100
-# proj = ccrs.OSGSB(central_longitude=nyc_lon, central_latitude=nyc_lat)
-# ax.set_title("Last ensemble member t2m (K)")
-# img = ax.pcolormesh(
-#     ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
-# )
-# ax.coastlines(linewidth=1)
-# ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-# plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
-# gl = ax.gridlines(draw_labels=True, linestyle="--")
+data = ds.z500[-1, -1, :, :]
+norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
+ax = fig.add_subplot(132, projection=proj)
+plt.rcParams["figure.dpi"] = 100
+proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+ax.set_title("Last ensemble member t2m (K)")
+img = ax.pcolormesh(
+    ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
+)
+ax.coastlines(linewidth=1)
+ax.add_feature(countries, edgecolor="black", linewidth=0.25)
+plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+gl = ax.gridlines(draw_labels=True, linestyle="--")
 
-# ds_ensemble_std = ds.std(dim="ensemble")
-# data = ds_ensemble_std.t2m[-1, :, :]
-# # norm = TwoSlopeNorm(vmin=data.min().values, vcenter=5, vmax=data.max().values)
-# proj = ccrs.OSGSB(central_longitude=nyc_lon, central_latitude=nyc_lat)
-# ax = fig.add_subplot(133, projection=proj)
-# ax.set_title("ensemble std  t2m (K)")
-# img = ax.pcolormesh(ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), cmap="seismic")
-# ax.coastlines(linewidth=1)
-# ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-# plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
-# gl = ax.gridlines(draw_labels=True, linestyle="--")
-# plt.savefig(f"{output_path}/gloabl_surface_temp_contour.png")
+ds_ensemble_std = ds.std(dim="ensemble")
+data = ds_ensemble_std.z500[-1, :, :]
+# norm = TwoSlopeNorm(vmin=data.min().values, vcenter=5, vmax=data.max().values)
+proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+ax = fig.add_subplot(133, projection=proj)
+ax.set_title("ensemble z500 (K)")
+img = ax.pcolormesh(ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), cmap="seismic")
+ax.coastlines(linewidth=1)
+ax.add_feature(countries, edgecolor="black", linewidth=0.25)
+plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+gl = ax.gridlines(draw_labels=True, linestyle="--")
+plt.savefig(f"{output_path}/gloabl_z500.png")
 
 # %%
 # We can also show a map of the ensemble mean of the 10 meter zonal winds (using some
@@ -243,10 +243,10 @@ plt.savefig(f"{output_path}/new_york_{var_computed}.png")
 # %%
 
 
-# def Nvidia_cmap():
-#     colors = ["#8946ff", "#ffffff", "#00ff00"]
-#     cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", colors)
-#     return cmap
+def Nvidia_cmap():
+    colors = ["#8946ff", "#ffffff", "#00ff00"]
+    cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", colors)
+    return cmap
 
 
 # plt.close("all")
