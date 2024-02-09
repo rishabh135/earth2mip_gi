@@ -206,29 +206,47 @@ plt.savefig(f"{output_path}/new_york_{var_computed}.png")
 # to see what happens.
 
 # %%
+
+#  nort polar stereo, https://nordicesmhub.github.io/forces-2021/learning/example-notebooks/projections.html
 plt.close("all")
 fig = plt.figure(figsize=(15, 10))
-plt.rcParams["figure.dpi"] = 100
-proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+fig.tight_layout()
+plt.rcParams["figure.dpi"] = 400
+#proj = ccrs.Stereographic(central_longitude=nyc_lon, central_latitude=nyc_lat)
+proj = ccrs.NorthPolarStereo(central_longitude=0)
+
 
 data = ds.z500[0, -1, :, :]
 norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
 ax = fig.add_subplot(131, projection=proj)
 ax.set_title("First ensemble member z500 ")
-img = ax.pcolormesh(
-    ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
-)
+
+
+
+cs1 = ax.contourf(ds.lon, ds.lat, data, 50, transform=ccrs.PlateCarree(), cmap='gist_ncar')
+ax.set_extent([0, 360, 0, 90], crs=ccrs.PlateCarree())
+
+
+
+
+
+# img = ax.pcolormesh(
+#     ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
+# )
 ax.coastlines(linewidth=1)
 ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+plt.colorbar(cs1, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
 gl = ax.gridlines(draw_labels=True, linestyle="--")
 
 data = ds.z500[-1, -1, :, :]
 norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
 ax = fig.add_subplot(132, projection=proj)
 plt.rcParams["figure.dpi"] = 100
-proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
-ax.set_title("Last ensemble member t2m (K)")
+#proj = ccrs.Stereographic(central_longitude=nyc_lon, central_latitude=nyc_lat)
+
+proj = ccrs.NorthPolarStereo(central_longitude=0)
+
+ax.set_title("Last ensemble member z500")
 img = ax.pcolormesh(
     ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
 )
@@ -240,7 +258,9 @@ gl = ax.gridlines(draw_labels=True, linestyle="--")
 ds_ensemble_std = ds.std(dim="ensemble")
 data = ds_ensemble_std.z500[-1, :, :]
 # norm = TwoSlopeNorm(vmin=data.min().values, vcenter=5, vmax=data.max().values)
-proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+#proj = ccrs.Stereographic(central_longitude=nyc_lon, central_latitude=nyc_lat)
+proj = ccrs.NorthPolarStereo(central_longitude=0)
+
 ax = fig.add_subplot(133, projection=proj)
 ax.set_title("ensemble z500 (K)")
 img = ax.pcolormesh(ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), cmap="seismic")
@@ -248,7 +268,7 @@ ax.coastlines(linewidth=1)
 ax.add_feature(countries, edgecolor="black", linewidth=0.25)
 plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
 gl = ax.gridlines(draw_labels=True, linestyle="--")
-plt.savefig(f"{output_path}/gloabl_z500.png")
+plt.savefig(f"{output_path}/gloabl_z500_NorthPolarStereo.png")
 
 # %%
 # We can also show a map of the ensemble mean of the 10 meter zonal winds (using some
