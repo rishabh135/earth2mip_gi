@@ -9,8 +9,9 @@ from datetime import datetime
 import configparser
 
 #  added for reading the correct login creds for cdsapi
-configur = configparser.ConfigParser()		
-configur.read("/scratch/gilbreth/gupt1075/fcnv2/config.ini")
+configur = configparser.ConfigParser()
+username = "gupt1075"	
+configur.read( f"/scratch/gilbreth/{username}/fcnv2/config.ini")
 
 
 
@@ -20,7 +21,7 @@ import xarray
 from geopy import geocoders
 
 #  added for reading custom earth2mip codebase
-sys.path.append("/scratch/gilbreth/gupt1075/fcnv2/earth2mip")
+sys.path.append(f"/scratch/gilbreth/{username}/fcnv2/earth2mip")
 
 
 
@@ -29,13 +30,13 @@ now = datetime.now()
 # Format the date to get the day and month
 day_month = now.strftime("%B_%d_")
 
-os.makedirs("/scratch/gilbreth/gupt1075/fcnv2/logs/", exist_ok=True)
+os.makedirs(f"/scratch/gilbreth/{username}/fcnv2/logs/", exist_ok=True)
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
-    filename=f"/scratch/gilbreth/gupt1075/fcnv2/logs/400_frames_{day_month}.log",
+    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/400_frames_{day_month}.log",
 )
 
 
@@ -53,7 +54,7 @@ package = registry.get_model("fcnv2")
 
 logging.warning("loading FCNv2 small model, this can take a bit")
 # sfno_inference_model = fcnv2_sm_load(package)
-cds_api = os.path.join("/scratch/gilbreth/gupt1075/fcnv2/earth2mip/", ".cdsapirc")
+cds_api = os.path.join(f"/scratch/gilbreth/{username}/fcnv2/earth2mip/", ".cdsapirc")
 logging.warning(f" right now in {os.getcwd()} and creating .cdsapirc in  ")
 
 if not os.path.exists(cds_api):
@@ -87,7 +88,7 @@ config = {
             }
         ],
     },
-    "output_path": "/scratch/gilbreth/gupt1075/fcnv2/output/z500_2018_03_01",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2018_03_01",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,

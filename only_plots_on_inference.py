@@ -52,9 +52,7 @@ package = registry.get_model("fcnv2")
 
 
 logging.warning("loading FCNv2 small model, this can take a bit")
-
-
-# # sfno_inference_model = fcnv2_sm_load(package)
+# sfno_inference_model = fcnv2_sm_load(package)
 # cds_api = os.path.join("/scratch/gilbreth/gupt1075/fcnv2/earth2mip/", ".cdsapirc")
 # logging.warning(f" right now in {os.getcwd()} and creating .cdsapirc in  ")
 
@@ -143,14 +141,13 @@ logging.warning(
 )
 ensemble_members = config["ensemble_members"]
 
-data_sample_ensemble = open_ensemble(
+ds = open_ensemble(
     os.path.join(output_path, nc_file_path),
     domains,
 )
 
-
 logging.warning(
-    f" >>>  data_sample_ensemble.shape {data_sample_ensemble}  start_time {start_time}  var_computed {var_computed}  \n data_sample_ensemble keys : {data_sample_ensemble.keys()} "
+    f" >>>  ds.shape {ds}  start_time {start_time}  var_computed {var_computed}  \n ds keys : {ds.keys()} "
 )
 
 
@@ -171,118 +168,22 @@ countries = cfeature.NaturalEarthFeature(
 )
 
 
-
 plt.close("all")
 lead_time = np.array(
-    (pd.to_datetime(data_sample_ensemble.time) - pd.to_datetime(data_sample_ensemble.time)[0]).total_seconds() / 3600
+    (pd.to_datetime(ds.time) - pd.to_datetime(ds.time)[0]).total_seconds() / 3600
 )
 nyc_lat = 40
 nyc_lon = 360 - 74
-NYC = data_sample_ensemble.sel(lon=nyc_lon, lat=nyc_lat)
+NYC = ds.sel(lon=nyc_lon, lat=nyc_lat)
 print(f" NYC shape: {NYC.z500.shape} ")
-
-
-import gif
-from random import randint
-from matplotlib import pyplot as plt
-
-# (Optional) Set the dots per inch resolution to 300
-gif.options.matplotlib["dpi"] = 400
-
-# Decorate a plot function with @gif.frame
-@gif.frame
-def plot(data_sample_ensemble):
-    print(f"data_sample_ensemble shape: {data_sample_ensemble.shape}")
-    fig = plt.figure(figsize=(15, 10))
-    fig.tight_layout()
-    plt.rcParams["figure.dpi"] = 400
-    #proj = ccrs.Stereographic(central_longitude=nyc_lon, central_latitude=nyc_lat)
-    proj = ccrs.NorthPolarStereo(central_longitude=0)
-    data = data_sample_ensemble.z500[0, -1, :, :]
-    norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
-    ax = fig.add_subplot(131, projection=proj)
-    ax.set_title("First ensemble member z500 ")
-    
-    cs1 = ax.contourf(data_sample_ensemble.lon, data_sample_ensemble.lat, data, 50, transform=ccrs.PlateCarree(), cmap='gist_ncar')
-    ax.set_extent([0, 360, 0, 90], crs=ccrs.PlateCarree())
-
-    # img = ax.pcolormesh(
-    #     data_sample_ensemble.lon, data_sample_ensemble.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
-    # )
-    ax.coastlines(linewidth=1)
-    ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-    plt.colorbar(cs1, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
-    gl = ax.gridlines(draw_labels=True, linestyle="--")
-
-
-
-
-
-    data = data_sample_ensemble.z500[-1, -1, :, :]
-    norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
-    ax = fig.add_subplot(132, projection=proj)
-    plt.rcParams["figure.dpi"] = 400
-    #proj = ccrs.Stereographic(central_longitude=nyc_lon, central_latitude=nyc_lat)
-
-    proj = ccrs.NorthPolarStereo(central_longitude=0)
-
-    ax.set_title("Last ensemble member z500")
-    img = ax.pcolormesh(
-        data_sample_ensemble.lon, data_sample_ensemble.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
-    )
-    ax.coastlines(linewidth=1)
-    ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-    plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
-    gl = ax.gridlines(draw_labels=True, linestyle="--")
-
-    data_sample_ensemble_ensemble_std = data_sample_ensemble.std(dim="ensemble")
-    data = data_sample_ensemble_ensemble_std.z500[-1, :, :]
-    # norm = TwoSlopeNorm(vmin=data.min().values, vcenter=5, vmax=data.max().values)
-    #proj = ccrs.Stereographic(central_longitude=nyc_lon, central_latitude=nyc_lat)
-    proj = ccrs.NorthPolarStereo(central_longitude=0)
-
-
-
-
-    ax = fig.add_subplot(133, projection=proj)
-    ax.set_title("ensemble z500 (K)")
-    img = ax.pcolormesh(data_sample_ensemble.lon, data_sample_ensemble.lat, data, transform=ccrs.PlateCarree(), cmap="seismic")
-    ax.coastlines(linewidth=1)
-    ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-    plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
-    gl = ax.gridlines(draw_labels=True, linestyle="--")
-
-
-
-
-# Construct "frames"
-frames = [plot(i) for i in range(10)]
-# Save "frames" to gif with a specified duration (milliseconds) between each frame
-gif.save(frames, f"{output_path}/gloabl_z500_NorthPolarStereo_gif.gif" , duration=50)
-
-
-
-def Nvidia_cmap():
-    colors = ["#8946ff", "#ffffff", "#00ff00"]
-    cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", colors)
-    return cmap
-
-
-plt.close("all")
-
-
-
-# fig = plt.figure(figsize=(9, 6))
-# ax = fig.add_subplot(111)
-# ax.set_title("Ensemble members of {domains}")
-# logging.warning(
-#     f" plotting ensemble of domains {domains} and var_computed {var_computed} "
-# )
-# ax.plot(lead_time, NYC.z500.T)
-# ax.set_ylabel("z500 [m/s]")
-
-
-
+fig = plt.figure(figsize=(9, 6))
+ax = fig.add_subplot(111)
+ax.set_title("Ensemble members of {domains}")
+logging.warning(
+    f" plotting ensemble of domains {domains} and var_computed {var_computed} "
+)
+ax.plot(lead_time, NYC.z500.T)
+ax.set_ylabel("z500 [m/s]")
 
 # ax = fig.add_subplot(312)
 # ax.set_title("deviation from ensemble mean")
@@ -307,10 +208,49 @@ plt.savefig(f"{output_path}/new_york_{var_computed}.png")
 # to see what happens.
 
 # %%
+plt.close("all")
+fig = plt.figure(figsize=(15, 10))
+plt.rcParams["figure.dpi"] = 100
+proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
 
-#  nort polar stereo, https://nordicesmhub.github.io/forces-2021/learning/example-notebooks/projections.html
+data = ds.z500[0, -1, :, :]
+norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
+ax = fig.add_subplot(131, projection=proj)
+ax.set_title("First ensemble member z500 ")
+img = ax.pcolormesh(
+    ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
+)
+ax.coastlines(linewidth=1)
+ax.add_feature(countries, edgecolor="black", linewidth=0.25)
+plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+gl = ax.gridlines(draw_labels=True, linestyle="--")
 
+data = ds.z500[-1, -1, :, :]
+norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
+ax = fig.add_subplot(132, projection=proj)
+plt.rcParams["figure.dpi"] = 100
+proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+ax.set_title("Last ensemble member t2m (K)")
+img = ax.pcolormesh(
+    ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
+)
+ax.coastlines(linewidth=1)
+ax.add_feature(countries, edgecolor="black", linewidth=0.25)
+plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+gl = ax.gridlines(draw_labels=True, linestyle="--")
 
+ds_ensemble_std = ds.std(dim="ensemble")
+data = ds_ensemble_std.z500[-1, :, :]
+# norm = TwoSlopeNorm(vmin=data.min().values, vcenter=5, vmax=data.max().values)
+proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+ax = fig.add_subplot(133, projection=proj)
+ax.set_title("ensemble z500 (K)")
+img = ax.pcolormesh(ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), cmap="seismic")
+ax.coastlines(linewidth=1)
+ax.add_feature(countries, edgecolor="black", linewidth=0.25)
+plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+gl = ax.gridlines(draw_labels=True, linestyle="--")
+plt.savefig(f"{output_path}/gloabl_z500.png")
 
 # %%
 # We can also show a map of the ensemble mean of the 10 meter zonal winds (using some
@@ -318,6 +258,11 @@ plt.savefig(f"{output_path}/new_york_{var_computed}.png")
 
 # %%
 
+
+def Nvidia_cmap():
+    colors = ["#8946ff", "#ffffff", "#00ff00"]
+    cmap = mcolors.LinearSegmentedColormap.from_list("custom_cmap", colors)
+    return cmap
 
 
 # plt.close("all")
