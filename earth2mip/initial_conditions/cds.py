@@ -39,6 +39,8 @@ urllib3.disable_warnings(
     urllib3.exceptions.InsecureRequestWarning
 )  # Hack to disable SSL warnings
 
+
+username = "gupt1075"
 # codes database: https://codes.ecmwf.int/grib/param-db/?filter=grib2
 CHANNEL_TO_CODE = {
     "z": 129,
@@ -227,17 +229,19 @@ def _parse_files(
 def _download_codes(client, codes, time, d) -> xarray.DataArray:
     files = []
     format = "grib"
-    d = "/scratch/gilbreth/gupt1075/fcnv2/cds_ics"
+    day_month_year = time.strftime("%d_%B_%Y")
+    d = f"/scratch/gilbreth/{username}/fcnv2/cds_ics/"
 
     def download(arg):
         name, req = arg
         hash_ = hashlib.sha256(str(req).encode()).hexdigest()
-        dirname = os.path.join(d, hash_)
+        dirname = os.path.join(d, f"{day_month_year}")
         os.makedirs(dirname, exist_ok=True)
-        filename = name + ".grib"
+        
+        filename = f"{name}_{hash_}.{format}"
         path = os.path.join(dirname, filename)
         logger.warning(
-            f" >> downloading from inside initial_conditions/cds.py dirname {dirname},   filenmae: {filename}, d: {d}, path: {path} "
+            f" >> downloading from inside initial_conditions/cds.py dirname {dirname},   filename: {filename}, d: {d}, path: {path} "
         )
         if not os.path.exists(path):
             logger.info(f"Data not found in cache. Downloading {name} to {path}")
