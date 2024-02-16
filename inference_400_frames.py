@@ -13,8 +13,6 @@ configur = configparser.ConfigParser()
 username = "gupt1075"	
 configur.read( f"/scratch/gilbreth/{username}/fcnv2/config.ini")
 
-
-
 import dotenv
 import xarray
 from geopy import geocoders
@@ -72,11 +70,11 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 4,
     "noise_amplitude": 0.05,
-    "simulation_length": 400,
+    "simulation_length": 4,
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-01-01 00:00:00",
+            "start_time": "2020-02-01 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -87,7 +85,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2020_01_01",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2020_02_01",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
@@ -149,6 +147,8 @@ ds = open_ensemble(
 logging.warning(
     f" >>>  ds.shape {ds}  start_time {start_time}  var_computed {var_computed}  \n ds keys : {ds.keys()} "
 )
+
+
 
 
 import cartopy.crs as ccrs

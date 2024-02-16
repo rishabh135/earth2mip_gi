@@ -106,6 +106,7 @@ def get_data_from_source(
 def get_initial_condition_for_model(
     time_loop: time_loop.TimeLoop, data_source: base.DataSource, time: datetime
 ) -> torch.Tensor:
+    logging.warning(f" get_initial_donidtions_from_source time {time}   time_loop {time_loop}")
     return get_data_from_source(
         data_source,
         time,

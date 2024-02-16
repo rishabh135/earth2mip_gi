@@ -152,7 +152,8 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         """  # noqa
         super().__init__()
         self.time_dependent = depends_on_time(model.forward)
-
+        
+        logging.warning(f"inside eart2mip/earth2mip/networks.__init__.py this is the main inference call")
         # TODO probably delete this line
         # if not isinstance(model, modulus.Module):
         #     model = Wrapper(model)
@@ -224,11 +225,14 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         if self.time_dependent and not time:
             raise ValueError("Time dependent models require ``time``.")
         time = time or datetime.datetime(1900, 1, 1)
+        
         with torch.no_grad():
             # drop all but the last time point
             # remove channels
 
             _, n_time_levels, n_channels, _, _ = x.shape
+            
+            logging.warning(f" __init__.py iterate funciton time: {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
             if normalize:

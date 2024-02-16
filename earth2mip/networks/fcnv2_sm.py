@@ -148,7 +148,7 @@ def load(package, *, pretrained=True, device="cuda"):
     params.N_out_channels = 73
 
     core_model = fcnv2.FourierNeuralOperatorNet(params).to(device)
-
+    logging.warning(f" getting climatologuy using local_center and local_std and loading model weights inside fcnv2_sm ")
     local_center = np.load(package.get("global_means.npy"))
     local_std = np.load(package.get("global_stds.npy"))
 

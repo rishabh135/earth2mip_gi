@@ -95,7 +95,7 @@ def run_ensembles(
     time_units = initial_time.strftime("hours since %Y-%m-%d %H:%M:%S")
     nc["time"].units = time_units
     nc["time"].calendar = "standard"
-
+    logging.warning(f"  time_units {time_units}  n_ensembles {n_ensemble}, batch_size {batch_size} ")
     for batch_id in range(0, n_ensemble, batch_size):
         logging.info(
             f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}"
@@ -120,6 +120,9 @@ def run_ensembles(
         #     )
 
         iterator = model(initial_time, x)
+        
+        logging.warning(f" >> run_ensemble ininference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n iterator.shape {iterator.shape}")
+    
 
         # Check if stdout is connected to a terminal
         if sys.stderr.isatty() and progress:
@@ -197,13 +200,22 @@ def main(config=None, nc_file_path=None):
 
     # Set up parallel
 
+    
+    
+    
+    DistributedManager.initialize()
+    
     logging.warning(
-        f" Inside inference_ensemble setting parallel trainig with config {config} "
+        f" Inside inference_ensemble insitialuzed diteibuted manager setting parallel trainig with config {config} "
     )
 
-    DistributedManager.initialize()
     device = DistributedManager().device
+    logging.warning(f" device {device}")
+    
     group = torch.distributed.group.WORLD
+
+    logging.warning(f" device {device} group {group}")
+    
 
     logging.info(f"Earth-2 MIP config loaded {config}")
     logging.info(f"Loading model onto device {device}")
@@ -288,11 +300,13 @@ def run_basic_inference(
     data_source: Any,
     time: datetime,
 ):
+    
+    x = initial_conditions.get_initial_condition_for_model(model, data_source, time)
+
     """Run a basic inference"""
     logging.warning(
-        f" insider inference_ensemble using a basic inference model: {model}, data_source: {data_source}  time: {time} "
+        f" BASIC inference_ensemble using a basic inference model: {model}, data_source: {data_source}  time: {time} with initial_conditions {x.shape} "
     )
-    x = initial_conditions.get_initial_condition_for_model(model, data_source, time)
 
     arrays = []
     times = []
@@ -306,6 +320,9 @@ def run_basic_inference(
     coords = dict(lat=model.grid.lat, lon=model.grid.lon)
     coords["channel"] = model.out_channel_names
     coords["time"] = times
+    
+    logging.warning(f" ran inference for model for times: {times} and for channels {model.out_channel_names} with stacked np_arrays output {stacked.shape}")
+    
     return xarray.DataArray(
         stacked, dims=["time", "history", "channel", "lat", "lon"], coords=coords
     )
@@ -337,15 +354,21 @@ def run_inference(
 
     weather_event = config.get_weather_event()
 
+
     if not data_source:
         data_source = initial_conditions.get_data_source(
             model.in_channel_names,
             initial_condition_source=weather_event.properties.initial_condition_source,
             netcdf=weather_event.properties.netcdf,
         )
-
+        logging.warning(f" data_source_cds: {data_source.shape}")
     date_obj = weather_event.properties.start_time
+    
+    #  if you want to turn off data downloading from cds comment out this line
     x = initial_conditions.get_initial_condition_for_model(model, data_source, date_obj)
+
+    logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {x.shape}")
+    
 
     dist = DistributedManager()
     n_ensemble_global = config.ensemble_members
