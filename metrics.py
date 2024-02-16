@@ -1,3 +1,5 @@
+
+
 # SPDX-FileCopyrightText: Copyright (c) 2023 - 2024 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-FileCopyrightText: All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
@@ -20,7 +22,26 @@ import torch
 
 from modulus.metrics.climate.reduction import _compute_lat_weights
 
-Tensor = torch.Tensor
+
+
+
+
+@torch.jit.script
+def weighted_acc_torch(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    result = weighted_acc_torch_channels(pred, target)
+    return torch.mean(result, dim=0)
+
+@torch.jit.script
+def unweighted_acc_torch_channels(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    result = torch.sum(pred * target, dim=(-1,-2)) / torch.sqrt(torch.sum(pred * pred, dim=(-1,-2)) * torch.sum(target *
+    target, dim=(-1,-2)))
+    return result
+
+@torch.jit.script
+def unweighted_acc_torch(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    result = unweighted_acc_torch_channels(pred, target)
+    return torch.mean(result, dim=0)
+
 
 
 def acc(pred: Tensor, target: Tensor, climatology: Tensor, lat: Tensor) -> Tensor:
@@ -269,21 +290,6 @@ def weighted_acc_torch_channels(pred: torch.Tensor, target: torch.Tensor) -> tor
     target, dim=(-1,-2)))
     return result
 
-@torch.jit.script
-def weighted_acc_torch(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    result = weighted_acc_torch_channels(pred, target)
-    return torch.mean(result, dim=0)
-
-@torch.jit.script
-def unweighted_acc_torch_channels(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    result = torch.sum(pred * target, dim=(-1,-2)) / torch.sqrt(torch.sum(pred * pred, dim=(-1,-2)) * torch.sum(target *
-    target, dim=(-1,-2)))
-    return result
-
-@torch.jit.script
-def unweighted_acc_torch(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    result = unweighted_acc_torch_channels(pred, target)
-    return torch.mean(result, dim=0)
 
 @torch.jit.script
 def top_quantiles_error_torch(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:

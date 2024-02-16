@@ -15,7 +15,6 @@ configur.read( f"/scratch/gilbreth/{username}/fcnv2/config.ini")
 
 
 
-
 import dotenv
 import xarray
 from geopy import geocoders
@@ -77,7 +76,7 @@ config = {
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2018-03-01 00:00:00",
+            "start_time": "2020-01-01 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -88,7 +87,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2018_03_01",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2020_01_01",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
@@ -98,6 +97,7 @@ config = {
     "perturbation_strategy": "correlated",
     "noise_reddening": 2.0,
 }
+
 
 
 # Option 1: Use config file and CLI (use this outside a notebook)

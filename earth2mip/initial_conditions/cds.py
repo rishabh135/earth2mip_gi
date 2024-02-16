@@ -223,8 +223,28 @@ def _parse_files(
     coords = {}
     coords["lat"] = lat[:, 0]
     coords["lon"] = lon[0, :]
-    return xarray.DataArray(array, dims=["channel", "lat", "lon"], coords=coords)
+    outputt =  xarray.DataArray(array, dims=["channel", "lat", "lon"], coords=coords)
+    
+        
+    # Print the entire structure of the DataArray
+    logger.warning(f" xarray downloaded: {outputt}")
 
+    # Print the dimensions and their sizes
+    logger.warning('Dimensions:')
+    for dim in outputt.dims:
+        logger.warning(f'{dim}: {len(outputt[dim])}')
+
+    # Print the coordinates and their values
+    logger.warning('\nCoordinates:')
+    for coord in da.coords:
+        logger.warning(f'{coord}:')
+        logger.warning(outputt[coord].values)
+
+    # Print the data and its shape
+    logger.warning(f'\nData: {outputt.values.shape}\n {outputt.values}  \n attributes {outputt.attrs}')
+
+
+    return output
 
 def _download_codes(client, codes, time, d) -> xarray.DataArray:
     files = []
@@ -254,6 +274,8 @@ def _download_codes(client, codes, time, d) -> xarray.DataArray:
     requests = _get_cds_requests(codes, time, format)
     with ThreadPoolExecutor(4) as pool:
         files = pool.map(download, requests)
+
+    logging.warning(f" files: {files}")
 
     return _parse_files(codes, files)
 
