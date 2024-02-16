@@ -232,7 +232,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
 
             _, n_time_levels, n_channels, _, _ = x.shape
             
-            logging.warning(f" __init__.py iterate funciton time: {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
+            logging.warning(f" __init__.py iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
             if normalize:
@@ -244,15 +244,20 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
 
             while True:
                 if self.source:
+                    #  unnormalizing the output
                     x_with_units = x * self.scale + self.center
                     dt = torch.tensor(self.time_step.total_seconds())
                     x += self.source(x_with_units, time) / self.scale * dt
+                    
+                # x shape
                 x = self.model(x, time)
                 time = time + self.time_step
 
                 # create args and kwargs for future use
                 restart = dict(x=x, normalize=False, time=time)
                 out = self.scale * x[:, -1] + self.center
+                logging.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time.shape} out: {out.shape}")
+                
                 yield time, out, restart
 
 

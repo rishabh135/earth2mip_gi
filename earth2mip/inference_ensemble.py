@@ -22,6 +22,8 @@ import sys
 from datetime import datetime
 from typing import Any, Optional
 
+
+from torchinfo import summary
 import cftime
 import numpy as np
 import torch
@@ -121,7 +123,11 @@ def run_ensembles(
 
         iterator = model(initial_time, x)
         
-        logging.warning(f" >> run_ensemble ininference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n iterator.shape {iterator.shape}")
+        out_sum = summary(model, input_data=[initial_time, x], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
+        logging.warning(" model_summary: {} \n".format(out_sum))
+
+    
+        logging.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n iterator.shape {iterator.shape}")
     
 
         # Check if stdout is connected to a terminal
@@ -144,7 +150,7 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
-                logging.debug(f"Saving data at step {k} of {n_steps}.")
+                logging.warning(f" >> Saving data at step {k} of {n_steps}.")
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
                 update_netcdf(
                     regridder(data),
@@ -361,7 +367,7 @@ def run_inference(
             initial_condition_source=weather_event.properties.initial_condition_source,
             netcdf=weather_event.properties.netcdf,
         )
-        logging.warning(f" data_source_cds: {data_source.shape}")
+        logging.warning(f" data_source_cds: {type(data_source)}")
     date_obj = weather_event.properties.start_time
     
     #  if you want to turn off data downloading from cds comment out this line
