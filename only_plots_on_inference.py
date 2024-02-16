@@ -35,7 +35,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
-    filename=f"/scratch/gilbreth/gupt1075/fcnv2/logs/400_frames_{day_month}.log",
+    filename=f"/scratch/gilbreth/gupt1075/fcnv2/logs/400_frames_{day_month}_only_plotting.log",
 )
 
 
@@ -169,9 +169,14 @@ countries = cfeature.NaturalEarthFeature(
 
 
 plt.close("all")
+
+
 lead_time = np.array(
     (pd.to_datetime(ds.time) - pd.to_datetime(ds.time)[0]).total_seconds() / 3600
 )
+
+logging.warning(f" List of all keys to be indexed{list(ds.keys())} ")
+
 nyc_lat = 40
 nyc_lon = 360 - 74
 NYC = ds.sel(lon=nyc_lon, lat=nyc_lat)
@@ -209,11 +214,39 @@ plt.savefig(f"{output_path}/new_york_{var_computed}.png")
 
 # %%
 plt.close("all")
+
+
+
+
+
+
+
 fig = plt.figure(figsize=(15, 10))
 plt.rcParams["figure.dpi"] = 100
 proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
 
+
+
+
+# define the time coordinates to index the dataset
+time_coords = ["2018-04-01 00:00:00"  , "2018-04-02 00:00:00" ]
+# index the dataset using the time coordinates
+ds_subset = ds.sel(time=time_coords).z500
+
+#  only plotting the last time step i.e. the 400th frame for 1st ensemble data_shap : 720, 1440
 data = ds.z500[0, -1, :, :]
+
+
+
+
+
+logging.warning(f" IMP >> ds_shape : {ds.z500.shape} data : {data.shape} ds_subset {ds_subset.shape}   ")
+
+
+
+
+
+
 norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
 ax = fig.add_subplot(131, projection=proj)
 ax.set_title("First ensemble member z500 ")

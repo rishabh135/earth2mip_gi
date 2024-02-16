@@ -225,7 +225,7 @@ def _parse_files(
     coords["lon"] = lon[0, :]
     outputt =  xarray.DataArray(array, dims=["channel", "lat", "lon"], coords=coords)
     
-        
+
     # Print the entire structure of the DataArray
     logger.warning(f" xarray downloaded: {outputt}")
 
@@ -236,7 +236,7 @@ def _parse_files(
 
     # Print the coordinates and their values
     logger.warning('\nCoordinates:')
-    for coord in da.coords:
+    for coord in outputt.coords:
         logger.warning(f'{coord}:')
         logger.warning(outputt[coord].values)
 
@@ -244,7 +244,7 @@ def _parse_files(
     logger.warning(f'\nData: {outputt.values.shape}\n {outputt.values}  \n attributes {outputt.attrs}')
 
 
-    return output
+    return outputt
 
 def _download_codes(client, codes, time, d) -> xarray.DataArray:
     files = []

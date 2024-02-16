@@ -373,6 +373,11 @@ def run_inference(
     #  if you want to turn off data downloading from cds comment out this line
     x = initial_conditions.get_initial_condition_for_model(model, data_source, date_obj)
 
+    original_array = x.values
+    # Convert NumPy array to PyTorch tensor
+    original_tensor = torch.from_numpy(original_array)
+        
+
     logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {x.shape}")
     
 
