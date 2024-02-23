@@ -90,6 +90,7 @@ def weighted_acc(pred,target, weighted  = True):
     s = np.sum(np.cos(np.pi/180* lat_np(np.arange(0, num_lat), num_lat)))
     weight = np.expand_dims(latitude_weighting_factor(np.arange(0, num_lat), num_lat, s), -1) if weighted else 1
     r = (weight*pred*target).sum() /np.sqrt((weight*pred*pred).sum() * (weight*target*target).sum())
+    logging.warning(f" inside weighted_acc value of r {r} ")
     return r
 
 def weighted_acc_masked(pred,target, weighted  = True, maskarray=1):

@@ -9,6 +9,14 @@ import numpy as np
 
 import configparser
 
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.colors import TwoSlopeNorm
+
 #  added for reading the correct login creds for cdsapi
 configur = configparser.ConfigParser()
 username = "gupt1075"	
@@ -43,7 +51,8 @@ dotenv.load_dotenv()
 # With the enviroment variables set now we import Earth-2 MIP
 from earth2mip import inference_ensemble, registry
 from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
-from earth2mip import weighted_acc_rmse
+
+from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rmse_torch, unlog_tp_torch
 
 
 
@@ -70,9 +79,9 @@ if not os.path.exists(cds_api):
 
 
 config = {
-    "ensemble_members": 4,
+    "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 73,
+    "simulation_length": 72 ,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -179,26 +188,48 @@ def find_files_with_suffix(suffix, directory):
 
 
 logging.warning(f" predicted_ds_keys {predicted_ds.keys()} \n  >>> predicted_ds.attrs {predicted_ds.attrs}  \n\n\n ************ original_ds_keys")
-predicted_data = predicted_ds.z500
-original_data = original_xr.numpy()
+predicted_data = predicted_ds.z500[-1]
+original_data = original_xr.cpu().detach().numpy().squeeze()
 
-logging.warning(f" >>>  predicted_data.shape {predicted_data.shape }  original_data.shape {original_data.shape }    start_time {start_time}  var_computed {var_computed}")
+
+
 
 # logging.warning(
 #     f" >>>  predicted_ds keys : {predicted_ds.keys() \n original_ds.shape {original_ds.shape }  domains {domains}    \n orignal_ds keys : {original_ds.keys()} "
 # )
 
 
+acc_list = []
+for idx, val in enumerate(original_data):
+    tmp_original_data = np.expand_dims(val, axis=0)
+    tmp_pred_data = np.expand_dims(predicted_data[idx], axis=0)
+    logging.warning(f" idx : {idx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+    acc_list.append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
+        
+    
+acc_list = np.asarray(acc_list)
+mu1 = acc_list.mean()
+sigma1 = acc_list.std()
 
-acc = weighted_acc(predicted_ds, original_ds, weighted  = False)
+# mu2 = X2.mean(axis=1)
+# sigma2 = X2.std(axis=1)
 
-# import cartopy.crs as ccrs
-# import cartopy.feature as cfeature
-# import matplotlib.colors as mcolors
-# import matplotlib.pyplot as plt
-# import numpy as np
-# import pandas as pd
-# from matplotlib.colors import TwoSlopeNorm
+# plot it!
+fig, ax = plt.subplots(1)
+ax.plot( np.arange(0,73), acc_list, lw=2, label='Anomaly Correlation Coefficient (ACC)  value')
+
+ax.fill_between(  acc_list, mu1+sigma1, mu1-sigma1, facecolor='C0', alpha=0.4)
+ax.set_title(f"Acc plot for all 72 frames for z500 variable  starting at {start_time}")
+ax.legend(loc='upper left')
+ax.set_xlabel('num steps')
+ax.set_ylabel('Anomaly Correlation Coefficient (ACC)  value')
+# ax.grid()
+plt.savefig(f"{output_path}/ACC_values_plot_z500.png")
+
+
+logging.warning(f" >>>  predicted_data.shape {predicted_data.shape }  original_data.shape {original_data.shape }  \n  acc: {acc_list}   ")
+
+
 
 # countries = cfeature.NaturalEarthFeature(
 #     category="cultural",
