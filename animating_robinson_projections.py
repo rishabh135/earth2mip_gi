@@ -9,10 +9,12 @@ from datetime import datetime
 import configparser
 
 #  added for reading the correct login creds for cdsapi
-configur = configparser.ConfigParser()		
-configur.read("/scratch/gilbreth/gupt1075/fcnv2/config.ini")
+# configur = configparser.ConfigParser()		
+# configur.read("/scratch/gilbreth/gupt1075/fcnv2/config.ini")
 
-
+import gif
+# (Optional) Set the dots per inch resolution to 300
+gif.options.matplotlib["dpi"] = 300
 
 
 import dotenv
@@ -50,8 +52,10 @@ logging.warning("Fetching model package...")
 
 package = registry.get_model("fcnv2")
 
-
 logging.warning("loading FCNv2 small model, this can take a bit")
+
+
+
 # sfno_inference_model = fcnv2_sm_load(package)
 # cds_api = os.path.join("/scratch/gilbreth/gupt1075/fcnv2/earth2mip/", ".cdsapirc")
 # logging.warning(f" right now in {os.getcwd()} and creating .cdsapirc in  ")
@@ -101,6 +105,16 @@ config = {
 }
 
 
+
+
+
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+
+#  setting up extra config variables
 # Option 1: Use config file and CLI (use this outside a notebook)
 # with open('./01_config.json', 'w') as f:
 #     json.dump(config, f)
@@ -123,9 +137,19 @@ nc_file_path = (
     + ".nc"
 )
 
+################################################################################
+################################################################################
+################################################################################
+################################################################################
+
+
 
 config_str = json.dumps(config)
 logging.warning(f" >>> Only plotting all the configuration as sent to inference_ensemble {config_str}  ")
+
+
+
+
 
 
 def open_ensemble(f, domain, chunks={"time": 1}):
@@ -136,19 +160,32 @@ def open_ensemble(f, domain, chunks={"time": 1}):
     return ds.assign_coords(time=time)
 
 
-logging.warning(
-    f"Saving ensembled output as a nc file with domains: {domains} and var_computed {var_computed}"
-)
-ensemble_members = config["ensemble_members"]
 
+
+ensemble_members = config["ensemble_members"]
+#  main part of codebase
 ds = open_ensemble(
     os.path.join(output_path, nc_file_path),
     domains,
 )
+logging.warning(f" >>>  ds.shape {ds}  start_time {start_time}  var_computed {var_computed}  \n ds keys : {ds.keys()} ")
 
-logging.warning(
-    f" >>>  ds.shape {ds}  start_time {start_time}  var_computed {var_computed}  \n ds keys : {ds.keys()} "
-)
+
+
+
+
+
+
+
+
+# define the time coordinates to index the dataset
+time_coords = ["2018-04-01 00:00:00"  , "2018-04-02 00:00:00" ]
+# index the dataset using the time coordinates
+ds_subset = ds.sel(time=time_coords).z500
+#  only plotting the last time step i.e. the 400th frame for 1st ensemble data_shap : 720, 1440
+data = ds.z500[0, -1, :, :]
+logging.warning(f" IMP >> ds_shape : {ds.z500.shape} data : {data.shape} ds_subset {ds_subset.shape}   ")
+
 
 
 import cartopy.crs as ccrs
@@ -168,160 +205,115 @@ countries = cfeature.NaturalEarthFeature(
 )
 
 
-plt.close("all")
-
-
-lead_time = np.array(
-    (pd.to_datetime(ds.time) - pd.to_datetime(ds.time)[0]).total_seconds() / 3600
-)
-
-logging.warning(f" List of all keys to be indexed{list(ds.keys())} ")
-
-nyc_lat = 40
-nyc_lon = 360 - 74
-NYC = ds.sel(lon=nyc_lon, lat=nyc_lat)
-print(f" NYC shape: {NYC.z500.shape} ")
-fig = plt.figure(figsize=(9, 6))
-ax = fig.add_subplot(111)
-ax.set_title("Ensemble members of {domains}")
-logging.warning(
-    f" plotting ensemble of domains {domains} and var_computed {var_computed} "
-)
-ax.plot(lead_time, NYC.z500.T)
-ax.set_ylabel("z500 [m/s]")
-
-# ax = fig.add_subplot(312)
-# ax.set_title("deviation from ensemble mean")
-# ax.plot(lead_time, NYC.t2m.T - NYC.t2m.mean("ensemble"))
-# ax.set_ylabel("u10m [m/s]")
-
-# ax = fig.add_subplot(313)
-# ax.set_title("ensemble spread")
-# ax.plot(lead_time, NYC.t2m.std("ensemble"))
-# ax.set_xlabel("lead_time [h]")
-# ax.set_ylabel("std u10m [m/s]")
-
-plt.tight_layout()
-plt.savefig(f"{output_path}/new_york_{var_computed}.png")
-
-# %%
-# Next, lets plot some fields of surface temperature. Since we have an ensemble of
-# predictions, lets display the first ensemble member, which is deterministic member,
-# and also the last ensemble member and the ensemmble standard deviation. One or both of
-# the perturbed members may look a little noisy, thats because our noise amplitude is
-# maybe too high. Try lowering the amplitude in the config or changing pertibation type
-# to see what happens.
-
-# %%
-
-
-# time_coords = ["2018-04-01 00:00:00"  , "2018-04-02 00:00:00" ]
-# # index the dataset using the time coordinates
-# ds_subset = ds.sel(time=time_coords).z500
-
-# logging.warning(f" IMP >> ds_shape : {ds.z500.shape}    ")
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# from geopy.geocoders import Nominatim
-
-
-
-
-# geolocator = Nominatim(user_agent="geoapiExercises")
-
-# location = geolocator.geocode("Chicago")
-
-# chi_lat= location.latitude
-# chi_lon = location.longitude
-
-
-
-
-
-plt.rcParams["figure.dpi"] = 300
-proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
-# # define the time coordinates to index the dataset
-time_coords = ["2018-04-01 00:00:00"  , "2018-04-01 06:00:00", "2018-04-01 12:00:00", "2018-04-01 18:00:00" ]
-# # index the dataset using the time coordinates
-
-#  only plotting the last time step i.e. the 400th frame for 1st ensemble data_shap : 720, 1440
-# data = ds.z500[0, -1, :, :]
-ensemble_selected = 0
-ds_subset = ds.sel(time=time_coords).z500[ensemble_selected, :, :, :]
-
-logging.warning(f" >>>ds_subset {ds_subset.shape}")
-
-
-
-for idx, time_val in enumerate(time_coords):
+def plot_ensemble_of_domains(ds):
     plt.close("all")
-    fig = plt.figure(figsize=(15, 10))
+    lead_time = np.array(
+        (pd.to_datetime(ds.time) - pd.to_datetime(ds.time)[0]).total_seconds() / 3600
+    )
+    nyc_lat = 40
+    nyc_lon = 360 - 74
+    NYC = ds.sel(lon=nyc_lon, lat=nyc_lat)
+    print(f" NYC shape: {NYC.z500.shape} and datasource:  {ds.shape} ")
+    
+    fig = plt.figure(figsize=(9, 6))
+    ax = fig.add_subplot(111)
+    ax.set_title("Ensemble members of {domains}")
+    logging.warning(
+        f" plotting ensemble of domains {domains} and var_computed {var_computed} "
+    )
+    ax.plot(lead_time, NYC.z500.T)
+    ax.set_ylabel("z500 [m/s]")
+    plt.tight_layout()
+    plt.savefig(f"{output_path}/new_york_{var_computed}.png")
+
+
+
+
+
+
+
+
+
+
+# Decorate a plot function with @gif.frame
+@gif.frame
+def plot(i):
+    xi = x[i*10:(i+1)*10]
+    yi = y[i*10:(i+1)*10]
+    plt.scatter(xi, yi)
+    plt.xlim((0, 100))
+    plt.ylim((0, 100))
+
+# Construct "frames"
+frames = [plot(i) for i in range(10)]
+
+# Save "frames" to gif with a specified duration (milliseconds) between each frame
+gif.save(output_path, f'_{gif}.gif', duration=50)
+
+
+
+
+
+plt.close("all")
+fig = plt.figure(figsize=(15, 10))
+plt.rcParams["figure.dpi"] = 100
+proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+
+
+
+
+
+def plot(single_ensemble_single_frame):
+    proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
     norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
-    ax = fig.add_subplot(121, projection=proj)
+    ax = fig.add_subplot(131, projection=proj)
     ax.set_title("First ensemble member z500 ")
     img = ax.pcolormesh(
-        ds.lon, ds.lat, ds_subset[idx, :, :], transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
+        ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
     )
     ax.coastlines(linewidth=1)
     ax.add_feature(countries, edgecolor="black", linewidth=0.25)
     plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
     gl = ax.gridlines(draw_labels=True, linestyle="--")
-
-
-
+    data = ds.z500[-1, -1, :, :]
     norm = TwoSlopeNorm(vmin=220, vcenter=290, vmax=320)
-    ax = fig.add_subplot(122, projection=proj)
+    
+    
+    
+    ax = fig.add_subplot(132, projection=proj)
     plt.rcParams["figure.dpi"] = 100
     proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
     ax.set_title("Last ensemble member t2m (K)")
     img = ax.pcolormesh(
-        ds.lon, ds.lat, ds_subset[idx, :, :], transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
+        ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), norm=norm, cmap="seismic"
     )
     ax.coastlines(linewidth=1)
     ax.add_feature(countries, edgecolor="black", linewidth=0.25)
     plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
     gl = ax.gridlines(draw_labels=True, linestyle="--")
 
-
-    # ds_ensemble_std = ds.std(dim="ensemble")
-    # data = ds_ensemble_std.z500[-1, :, :]
-    # # norm = TwoSlopeNorm(vmin=data.min().values, vcenter=5, vmax=data.max().values)
-    # proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
-    # ax = fig.add_subplot(133, projection=proj)
-    # ax.set_title("ensemble z500 (K)")
-    # img = ax.pcolormesh(ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), cmap="seismic")
-    # ax.coastlines(linewidth=1)
-    # ax.add_feature(countries, edgecolor="black", linewidth=0.25)
-    # plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
-    # gl = ax.gridlines(draw_labels=True, linestyle="--")
-
-    hour = time_val.replace(" ", "_")
-    plt.savefig(f"{output_path}/{hour}_z500.png")
+    
+    
+    ds_ensemble_std = ds.std(dim="ensemble")
+    data = ds_ensemble_std.z500[-1, :, :]
+    # norm = TwoSlopeNorm(vmin=data.min().values, vcenter=5, vmax=data.max().values)
+    proj = ccrs.LambertConformal(central_longitude=nyc_lon, central_latitude=nyc_lat)
+    ax = fig.add_subplot(133, projection=proj)
+    ax.set_title("ensemble z500 (K)")
+    img = ax.pcolormesh(ds.lon, ds.lat, data, transform=ccrs.PlateCarree(), cmap="seismic")
+    ax.coastlines(linewidth=1)
+    ax.add_feature(countries, edgecolor="black", linewidth=0.25)
+    plt.colorbar(img, ax=ax, shrink=0.40, norm=mcolors.CenteredNorm(vcenter=0))
+    gl = ax.gridlines(draw_labels=True, linestyle="--")
 
 
 
 
 
-
-
-
-
+# plt.savefig(f"{output_path}/gloabl_z500.png")
 # %%
 # We can also show a map of the ensemble mean of the 10 meter zonal winds (using some
 # Nvidia style coloring!)
