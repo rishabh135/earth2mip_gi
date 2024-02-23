@@ -176,7 +176,7 @@ def run_ensembles(
 
 def main(config=None, nc_file_path=None):
     logging.warning(
-        f" Inside inference_ensemble and using standard args with weather_model "
+        f" Inside inference_ensemble and using standard args with weather_model config: {config} "
     )
 
     if config is None:
@@ -209,18 +209,23 @@ def main(config=None, nc_file_path=None):
     
     
     
-    DistributedManager.initialize()
-    
     logging.warning(
-        f" Inside inference_ensemble insitialuzed diteibuted manager setting parallel trainig with config {config} "
+        f" Inside inference_ensemble insitialuzed distributed manager setting parallel trainig with config {config} "
     )
+    # DistributedManager.initialize()
+    # device = DistributedManager().device
 
-    device = DistributedManager().device
-    logging.warning(f" device {device}")
+    # Check if GPU is available
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    
+    # logging.warning(f" device {device}")
     
     group = torch.distributed.group.WORLD
 
-    logging.warning(f" device {device} group {group}")
+    # logging.warning(f" device {device} group {group}")
     
 
     logging.info(f"Earth-2 MIP config loaded {config}")
