@@ -74,7 +74,7 @@ config = {
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2015-01-01 00:00:00",
+            "start_time": "2020-09-01 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -85,7 +85,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2015_01_01",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2020_09_01",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
@@ -106,7 +106,7 @@ config = {
 
 start_time = datetime.strptime(
     config["weather_event"]["properties"]["start_time"], "%Y-%m-%d %H:%M:%S"
-).strftime("%Y_%m_%d")
+).strftime("%d_%B_%Y")
 
 
 output_path = config["output_path"]

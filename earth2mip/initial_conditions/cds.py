@@ -229,19 +229,19 @@ def _parse_files(
     # Print the entire structure of the DataArray
     logger.warning(f" xarray downloaded: {outputt}")
 
-    # Print the dimensions and their sizes
-    logger.warning('Dimensions:')
-    for dim in outputt.dims:
-        logger.warning(f'{dim}: {len(outputt[dim])}')
+    # # Print the dimensions and their sizes
+    # logger.warning('Dimensions:')
+    # for dim in outputt.dims:
+    #     logger.warning(f'{dim}: {len(outputt[dim])}')
 
-    # Print the coordinates and their values
-    logger.warning('\nCoordinates:')
-    for coord in outputt.coords:
-        logger.warning(f'{coord}:')
-        logger.warning(outputt[coord].values)
+    # # Print the coordinates and their values
+    # logger.warning('\nCoordinates:')
+    # for coord in outputt.coords:
+    #     logger.warning(f'{coord}:')
+    #     logger.warning(outputt[coord].values)
 
     # Print the data and its shape
-    logger.warning(f'\nData: {outputt.values.shape}\n {outputt.values}  \n attributes {outputt.attrs}')
+    logger.warning(f'\nData: {outputt.values.shape}  \n attributes {outputt.attrs}')
 
 
     return outputt

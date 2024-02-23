@@ -124,11 +124,11 @@ def run_ensembles(
 
         iterator = model(initial_time, x)
         
-        out_sum = summary(model, input_data=[initial_time.map(pd.Timedelta.to_pytimedelta), x], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
-        logging.warning(" model_summary: {} \n".format(out_sum))
+        # out_sum = summary(model, input_data=[initial_time.map(pd.Timedelta.to_pytimedelta), x], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
+        # logging.warning(" model_summary: {} \n".format(out_sum))
 
     
-        logging.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n iterator.shape {iterator.shape}")
+        logging.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n ")
     
 
         # Check if stdout is connected to a terminal
@@ -238,8 +238,8 @@ def main(config=None, nc_file_path=None):
         config,
     )
     logging.info("Running inference")
-    run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
-
+    original_xr = run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
+    return original_xr
 
 def get_initializer(
     model,
@@ -378,7 +378,7 @@ def run_inference(
     
     #  if you want to turn off data downloading from cds comment out this line
     x = initial_conditions.get_initial_condition_for_model(model, data_source, date_obj)
-
+    original_xr = x
     logging.warning(f" >> x_type: {x.type}")
 
     # # Convert NumPy array to PyTorch tensor
@@ -461,7 +461,7 @@ def run_inference(
         torch.distributed.barrier(group)
 
     logging.info(f"Ensemble forecast finished, saved to: {output_file_path}")
-
+    return original_xr
 
 if __name__ == "__main__":
     main()

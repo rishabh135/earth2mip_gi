@@ -256,7 +256,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 # create args and kwargs for future use
                 restart = dict(x=x, normalize=False, time=time)
                 out = self.scale * x[:, -1] + self.center
-                logging.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time.shape} out: {out.shape}")
+                logging.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
                 
                 yield time, out, restart
 

@@ -5,7 +5,7 @@ import os,re
 from tqdm import tqdm
 import sys
 from datetime import datetime
-
+import numpy as np
 
 import configparser
 
@@ -72,7 +72,7 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 4,
     "noise_amplitude": 0.05,
-    "simulation_length": 4,
+    "simulation_length": 73,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -108,7 +108,7 @@ config = {
 
 start_time = datetime.strptime(
     config["weather_event"]["properties"]["start_time"], "%Y-%m-%d %H:%M:%S"
-).strftime("%Y_%m_%d")
+).strftime("%d_%B_%Y")
 
 
 output_path = config["output_path"]
@@ -124,7 +124,7 @@ nc_file_path = (
 
 
 config_str = json.dumps(config)
-inference_ensemble.main(config_str, nc_file_path)
+original_xr =  inference_ensemble.main(config_str, nc_file_path)
 logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
 
 
@@ -134,6 +134,13 @@ def open_ensemble(f, domain, chunks={"time": 1}):
     ds = xarray.open_dataset(f, chunks=chunks, group=domain)
     ds.attrs = root.attrs
     return ds.assign_coords(time=time)
+
+
+
+
+
+
+
 
 
 logging.warning(
@@ -148,30 +155,38 @@ predicted_ds = open_ensemble(
 
 
 
-original_dir_path = f"/scratch/gilbreth/{username}/fcnv2/cds_ics/"
-
-
-day_month_year = start_time.strftime("%d_%B_%Y")
-prefix = f"{day_month_year}"
-
-# Use the os.listdir() function to get a list of all files in the directory
-files = os.listdir(original_dir_path)
-
-# Use a regular expression to filter the list of files
-regex = re.compile('^' + prefix)
-filtered_files = [f for f in files if regex.match(f)]
-
-original_ds = open_ensemble(filtered_files[0] ,domains )
+original_dir_path = f"/scratch/gilbreth/{username}/fcnv2/cds_ics/{start_time}"
 
 
 
-logging.warning(
-    f" >>>  predicted_ds.shape {predicted_ds.shape }  start_time {start_time}  var_computed {var_computed}  \n predicted_ds keys : {predicted_ds.keys()} "
-)
+def find_files_with_suffix(suffix, directory):
+    """
+    Finds all files in the given directory and its subdirectories that have the specified suffix.
+    """
+    # Create an empty list to store the matching files
+    matching_files = []
+    logging.warning(f" inside find files with {directory}    ")
+    for path, subdirs, files in os.walk(directory):
+        for name in files:
+            logging.warning( f" >>  " + os.path.join(path, name))
 
-logging.warning(
-    f" >>>  original_ds.shape {original_ds.shape }  domains {domains}    \n orignal_ds keys : {original_ds.keys()} "
-)
+            if name.endswith(suffix):
+                # If it does, add the full path of the file to the list
+                matching_files.append(os.path.join(directory, name))
+
+    # Return the list of matching files
+    return matching_files
+
+
+logging.warning(f" predicted_ds_keys {predicted_ds.keys()} \n  >>> predicted_ds.attrs {predicted_ds.attrs}  \n\n\n ************ original_ds_keys")
+predicted_data = predicted_ds.z500
+original_data = original_xr.numpy()
+
+logging.warning(f" >>>  predicted_data.shape {predicted_data.shape }  original_data.shape {original_data.shape }    start_time {start_time}  var_computed {var_computed}")
+
+# logging.warning(
+#     f" >>>  predicted_ds keys : {predicted_ds.keys() \n original_ds.shape {original_ds.shape }  domains {domains}    \n orignal_ds keys : {original_ds.keys()} "
+# )
 
 
 
