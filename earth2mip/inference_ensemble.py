@@ -21,6 +21,7 @@ import os
 import sys
 from datetime import datetime
 from typing import Any, Optional
+import pandas as pd
 
 
 from torchinfo import summary
@@ -123,7 +124,7 @@ def run_ensembles(
 
         iterator = model(initial_time, x)
         
-        out_sum = summary(model, input_data=[initial_time, x], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
+        out_sum = summary(model, input_data=[initial_time.map(pd.Timedelta.to_pytimedelta), x], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
         logging.warning(" model_summary: {} \n".format(out_sum))
 
     
@@ -378,14 +379,13 @@ def run_inference(
     #  if you want to turn off data downloading from cds comment out this line
     x = initial_conditions.get_initial_condition_for_model(model, data_source, date_obj)
 
+    logging.warning(f" >> x_type: {x.type}")
 
-
-    original_array = x.values
-    # Convert NumPy array to PyTorch tensor
-    original_tensor = torch.from_numpy(original_array)
+    # # Convert NumPy array to PyTorch tensor
+    # original_tensor = torch.from_numpy(original_array)
         
 
-    logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {x.shape}")
+    logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {x.shape}  >>  {x.type}")
     
 
     dist = DistributedManager()

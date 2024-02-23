@@ -43,6 +43,9 @@ dotenv.load_dotenv()
 # With the enviroment variables set now we import Earth-2 MIP
 from earth2mip import inference_ensemble, registry
 from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
+from earth2mip import weighted_acc_rmse
+
+
 
 logging.warning("Fetching model package...")
 package = registry.get_model("fcnv2")
@@ -171,6 +174,8 @@ logging.warning(
 )
 
 
+
+acc = weighted_acc(predicted_ds, original_ds, weighted  = False)
 
 # import cartopy.crs as ccrs
 # import cartopy.feature as cfeature
