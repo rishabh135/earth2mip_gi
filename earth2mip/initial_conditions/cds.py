@@ -263,6 +263,7 @@ def _download_codes(client, codes, time, d) -> xarray.DataArray:
         logger.warning(
             f" >> downloading from inside initial_conditions/cds.py dirname {dirname},   filename: {filename}, d: {d}, path: {path} "
         )
+        
         if not os.path.exists(path):
             logger.info(f"Data not found in cache. Downloading {name} to {path}")
             client.retrieve(name, req, path + ".tmp")
