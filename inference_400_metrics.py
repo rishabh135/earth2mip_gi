@@ -81,7 +81,7 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 72 ,
+    "simulation_length": 730,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -133,7 +133,7 @@ nc_file_path = (
 
 
 config_str = json.dumps(config)
-original_xr =  inference_ensemble.main(config_str, nc_file_path)
+__ =  inference_ensemble.main(config_str, nc_file_path)
 logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
 
 
@@ -164,62 +164,101 @@ predicted_ds = open_ensemble(
 
 
 
-original_dir_path = f"/scratch/gilbreth/{username}/fcnv2/cds_ics/{start_time}"
+original_dir_path = "/scratch/gilbreth/gupt1075/fcnv2/cds_files_batch/ERA5-pl-z500.25.nc"
 
 
 
-def find_files_with_suffix(suffix, directory):
-    """
-    Finds all files in the given directory and its subdirectories that have the specified suffix.
-    """
-    # Create an empty list to store the matching files
-    matching_files = []
-    logging.warning(f" inside find files with {directory}    ")
-    for path, subdirs, files in os.walk(directory):
-        for name in files:
-            logging.warning( f" >>  " + os.path.join(path, name))
+# def find_files_with_suffix(suffix, directory):
+#     """
+#     Finds all files in the given directory and its subdirectories that have the specified suffix.
+#     """
+#     # Create an empty list to store the matching files
+#     matching_files = []
+#     logging.warning(f" inside find files with {directory}    ")
+#     for path, subdirs, files in os.walk(directory):
+#         for name in files:
+#             logging.warning( f" >>  " + os.path.join(path, name))
 
-            if name.endswith(suffix):
-                # If it does, add the full path of the file to the list
-                matching_files.append(os.path.join(directory, name))
+#             if name.endswith(suffix):
+#                 # If it does, add the full path of the file to the list
+#                 matching_files.append(os.path.join(directory, name))
 
-    # Return the list of matching files
-    return matching_files
+#     # Return the list of matching files
+#     return matching_files
 
 
 logging.warning(f" predicted_ds_keys {predicted_ds.keys()} \n  >>> predicted_ds.attrs {predicted_ds.attrs}  \n\n\n ************ original_ds_keys")
 predicted_data = predicted_ds.z500[-1]
-original_data = original_xr.cpu().detach().numpy().squeeze()
 
 
 
 
-# logging.warning(
-#     f" >>>  predicted_ds keys : {predicted_ds.keys() \n original_ds.shape {original_ds.shape }  domains {domains}    \n orignal_ds keys : {original_ds.keys()} "
-# )
+
+import netCDF4
+import numpy as np
+import torch
+
+# Open the NetCDF4 file
+nc_file = netCDF4.Dataset( original_dir_path , 'r')
+# Get the dimensions of the data variable
+var_shape = nc_file.variables["z"].shape
+
+logging.warning(f" >>>  {nc_file.variables}   >>  {nc_file.variables.keys() }   << {var_shape} ")
+# Define the chunk size
+chunk_size = 1000
+
+# Initialize an empty list to store the chunk data
+chunk_data_list = []
+
+# Loop through the chunks and read the data
+for i in range(int(np.ceil(var_shape[0] / chunk_size))):
+    if(i > 1):
+        break
+    start_index = i * chunk_size
+    end_index = min((i + 1) * chunk_size, var_shape[0])
+    chunk_data = nc_file.variables['z'][start_index:end_index, :, :]
+    chunk_data_list.append(chunk_data)
+
+# Close the NetCDF4 file
+nc_file.close()
+
+# Convert the list of chunk data to a NumPy array
+original_data = np.concatenate(chunk_data_list, axis=0)[:predicted_data.shape[0]]
+# logging.warning(f" data_array {original_data.shape} ")
+
+
+
+
+logging.warning(
+    f" >>>  predicted_data {predicted_data.shape}  original_data {original_data.shape} domains {domains}")
 
 
 acc_list = []
-for idx, val in enumerate(original_data):
+for idx in  range(predicted_data.shape[0]):
+    val = original_data[idx]
+    val2 = predicted_data[idx]
     tmp_original_data = np.expand_dims(val, axis=0)
-    tmp_pred_data = np.expand_dims(predicted_data[idx], axis=0)
-    logging.warning(f" idx : {idx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+    tmp_pred_data = np.expand_dims(val2, axis=0)
+    # logging.warning(f" idx : {idx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
     acc_list.append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
         
     
 acc_list = np.asarray(acc_list)
+
 mu1 = acc_list.mean()
 sigma1 = acc_list.std()
 
 # mu2 = X2.mean(axis=1)
 # sigma2 = X2.std(axis=1)
 
+
+logging.warning(f" ACC values {acc_list}  mu1: {mu1}  sigma1 {sigma1}")
 # plot it!
 fig, ax = plt.subplots(1)
-ax.plot( np.arange(0,73), acc_list, lw=2, label='Anomaly Correlation Coefficient (ACC)  value')
+ax.plot( np.arange(0,predicted_data.shape[0]), acc_list, lw=2, label='Anomaly Correlation Coefficient (ACC)  value')
 
 ax.fill_between(  acc_list, mu1+sigma1, mu1-sigma1, facecolor='C0', alpha=0.4)
-ax.set_title(f"Acc plot for all 72 frames for z500 variable  starting at {start_time}")
+ax.set_title(f"Acc plot for all {predicted_data.shape[0]} frames for z500 variable  starting at {start_time}")
 ax.legend(loc='upper left')
 ax.set_xlabel('num steps')
 ax.set_ylabel('Anomaly Correlation Coefficient (ACC)  value')
