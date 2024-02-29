@@ -227,7 +227,7 @@ def _parse_files(
     
 
     # Print the entire structure of the DataArray
-    logger.warning(f" xarray downloaded: {outputt}")
+    # logger.warning(f" xarray downloaded: {outputt}")
 
     # # Print the dimensions and their sizes
     # logger.warning('Dimensions:')
@@ -241,7 +241,7 @@ def _parse_files(
     #     logger.warning(outputt[coord].values)
 
     # Print the data and its shape
-    logger.warning(f'\nData: {outputt.values.shape}  \n attributes {outputt.attrs}')
+    logger.warning(f'\n xarray downloaded  Data: {outputt.values.shape}  \n attributes {outputt.attrs}')
 
 
     return outputt

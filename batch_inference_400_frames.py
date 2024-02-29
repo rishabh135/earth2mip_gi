@@ -30,17 +30,17 @@ day_month = now.strftime("%B_%d_")
 os.makedirs(f"/scratch/gilbreth/{username}/fcnv2/logs/", exist_ok=True)
 
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+    format="%(asctime)s - %(levelname)s - %(name)s -  %(message)s",
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
-    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/400_frames_{day_month}.log",
+    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_inf_{day_month}.log",
 )
 
 
 dotenv.load_dotenv()
 
 # With the enviroment variables set now we import Earth-2 MIP
-from earth2mip import inference_ensemble, registry
+from earth2mip import batch_inference_ensemble, registry
 from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
 
 logging.warning("Fetching model package...")
@@ -68,13 +68,13 @@ if not os.path.exists(cds_api):
 
 
 config = {
-    "ensemble_members": 2,
+    "ensemble_members": 4,
     "noise_amplitude": 0.05,
-    "simulation_length": 10,
+    "simulation_length": 25,
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-01-01 00:00:00",
+            "start_time": "2020-03-01 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -85,7 +85,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2020_01_01",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2020_03_01",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
@@ -122,7 +122,7 @@ nc_file_path = (
 
 
 config_str = json.dumps(config)
-inference_ensemble.main(config_str, nc_file_path)
+batch_inference_ensemble.main(config_str, nc_file_path)
 logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
 
 

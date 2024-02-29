@@ -26,9 +26,18 @@ tmp/
 tests/Output.*
 *.png
 
+/scratch/gilbreth/gupt1075/fcnv2/fcnv2_sm/*
+/scratch/gilbreth/gupt1075/fcnv2/cds_ics/*
+/scratch/gilbreth/gupt1075/fcnv2/output/*
+/scratch/gilbreth/gupt1075/fcnv2/logs/*
+
+./fcnv2_sm/weights.tar
+./fcnv2_sm/global_stds.npy
+
 *.bak
 *.egg-info
-
+*.npy
+*.tar
 *.mp4
 # Created by https://www.toptal.com/developers/gitignore/api/python
 .tmp*
