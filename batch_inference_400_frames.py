@@ -85,7 +85,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/z500_2020_03_01",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/z500",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,

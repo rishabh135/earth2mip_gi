@@ -114,7 +114,7 @@ def run_ensembles(
 
         x = x.repeat(batch_size, 1, 1, 1, 1)
 
-        logger.warning(f" SKIPPING Perturb before perturb x-> {x.shape} ")
+        logger.warning(f" SKIPPING Perturb before perturb x-> {x.shape}   rank:  {rank}  batch_id {batch_id}")
         # x = perturb(x, rank, batch_id, model.device)
         
         
@@ -395,10 +395,7 @@ def run_inference(
         return diff.total_seconds() / 3600 # Convert to hours
         
     
-    original_dir_path = "/scratch/gilbreth/gupt1075/fcnv2/cds_files_batch/ERA5-pl-z500.25.nc"
-
-
-
+   
 
     def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6), chunk_size=1000):
         # Open the NetCDF file
@@ -442,9 +439,15 @@ def run_inference(
             return time_data, var_data
 
 
-    start_time = datetime(2020, 3, 1, 0, 0, 0)
-    k = 75
-    time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , start_time, k)
+    start_time = datetime(2020, 1, 1, 0, 0, 0)
+    end_time = datetime(2023, 9, 1, 23, 59, 59)
+    username = "gupt1075"
+    tmp_path =  f"/scratch/gilbreth/{username}/fcnv2/cds_files_batch/"
+    original_dir_path = f"{tmp_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc" 
+
+    num_steps_frames= 75
+    
+    time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , start_time, num_steps_frames)
     # Open the NetCDF4 file
     # nc_file = netCDF4.Dataset( original_dir_path , 'r')
     # x_shape torch.Size([1, 1, 73, 721, 1440]) 
