@@ -39,7 +39,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -  %(message)s",
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
-    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_inf_{day_month}.log",
+    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_inf_2_{day_month}.log",
 )
 
 
