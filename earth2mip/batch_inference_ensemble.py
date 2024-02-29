@@ -17,9 +17,41 @@
 import argparse
 import json
 import logging
+import os
+import sys
+from datetime import datetime
+from typing import Any, Optional
+import pandas as pd
 
-logging.getLogger("batch_inference").setLevel(logging.INFO)
-logger = logging.getLogger(__name__)
+
+from torchinfo import summary
+import cftime
+import numpy as np
+import torch
+import tqdm
+import xarray
+from modulus.distributed.manager import DistributedManager
+from netCDF4 import Dataset as DS
+
+import earth2mip.grid
+
+__all__ = ["run_inference"]
+
+# need to import initial conditions first to avoid unfortunate
+# GLIBC version conflict when importing xarray. There are some unfortunate
+# issues with the environment.
+from earth2mip import initial_conditions, regrid, time_loop
+from earth2mip._channel_stds import channel_stds
+from earth2mip.ensemble_utils import (
+    generate_bred_vector,
+    generate_noise_correlated,
+    generate_noise_grf,
+)
+from earth2mip.netcdf import initialize_netcdf, update_netcdf
+from earth2mip.networks import get_model
+from earth2mip.schema import EnsembleRun, PerturbationStrategy
+from earth2mip.time_loop import TimeLoop
+
 
 import os, math
 import sys
@@ -58,7 +90,6 @@ from earth2mip.networks import get_model
 from earth2mip.schema import EnsembleRun, PerturbationStrategy
 from earth2mip.time_loop import TimeLoop
 
-# logger = logger.getLogger("inference")
 
 
 def get_checkpoint_path(rank, batch_id, path):
@@ -70,7 +101,7 @@ def get_checkpoint_path(rank, batch_id, path):
 def save_restart(restart, rank, batch_id, path):
     path = get_checkpoint_path(rank, batch_id, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    logger.info(f"Saving restart file to {path}.")
+    logging.info(f"Saving restart file to {path}.")
     torch.save(restart, path)
 
 
@@ -104,9 +135,9 @@ def run_ensembles(
     time_units = initial_time.strftime("hours since %Y-%m-%d %H:%M:%S")
     nc["time"].units = time_units
     nc["time"].calendar = "standard"
-    logger.warning(f"  time_units {time_units}  n_ensembles {n_ensemble}, batch_size {batch_size} ")
+    logging.warning(f"  time_units {time_units}  n_ensembles {n_ensemble}, batch_size {batch_size} ")
     for batch_id in range(0, n_ensemble, batch_size):
-        logger.info(
+        logging.info(
             f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}"
         )
         batch_size = min(batch_size, n_ensemble - batch_id)
@@ -114,7 +145,7 @@ def run_ensembles(
 
         x = x.repeat(batch_size, 1, 1, 1, 1)
 
-        logger.warning(f" SKIPPING Perturb before perturb x-> {x.shape}   rank:  {rank}  batch_id {batch_id}")
+        logging.warning(f" SKIPPING Perturb before perturb x-> {x.shape}   rank:  {rank}  batch_id {batch_id}")
         # x = perturb(x, rank, batch_id, model.device)
         
         
@@ -123,8 +154,8 @@ def run_ensembles(
         # TODO: figure out if needed
         # if restart_dir:
         #     path = get_checkpoint_path(rank, batch_id, restart_dir)
-        #     # TODO use logger
-        #     logger.info(f"Loading from restart from {path}")
+        #     # TODO use logging
+        #     logging.info(f"Loading from restart from {path}")
         #     kwargs = torch.load(path)
         # else:
         #     kwargs = dict(
@@ -135,11 +166,11 @@ def run_ensembles(
 
         iterator = model(initial_time, x)
         
-        # out_sum = summary(model, input_data=[initial_time.map(pd.Timedelta.to_pytimedelta), x], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
-        # logger.warning(" model_summary: {} \n".format(out_sum))
+        out_sum = summary(model, input_data=[initial_time, x], dtypes=[datetime, torch.long], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
+        logging.warning(" >> MODEL_summary: {} \n".format(out_sum))
 
     
-        logger.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n ")
+        logging.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n ")
     
 
         # Check if stdout is connected to a terminal
@@ -163,7 +194,7 @@ def run_ensembles(
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
-                logger.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
+                logging.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
                 
                 update_netcdf(
                     regridder(data),
@@ -190,7 +221,7 @@ def run_ensembles(
 
 
 def main(config=None, nc_file_path=None):
-    logger.warning(
+    logging.warning(
         f" Inside inference_ensemble and using standard args with weather_model config: {config} "
     )
 
@@ -224,7 +255,7 @@ def main(config=None, nc_file_path=None):
     
     
     
-    logger.warning(
+    logging.warning(
         f" Inside inference_ensemble insitialuzed distributed manager setting parallel trainig with config {config} "
     )
     # DistributedManager.initialize()
@@ -236,22 +267,22 @@ def main(config=None, nc_file_path=None):
     else:
         device = torch.device("cpu")
     
-    # logger.warning(f" device {device}")
+    # logging.warning(f" device {device}")
     
     group = torch.distributed.group.WORLD
 
-    # logger.warning(f" device {device} group {group}")
+    # logging.warning(f" device {device} group {group}")
     
 
-    logger.info(f"Earth-2 MIP config loaded {config}")
-    logger.info(f"Loading model onto device {device}")
+    logging.info(f"Earth-2 MIP config loaded {config}")
+    logging.info(f"Loading model onto device {device}")
     model = get_model(config.weather_model, device=device)
-    logger.info("Constructing initializer data source")
+    logging.info("Constructing initializer data source")
     perturb = get_initializer(
         model,
         config,
     )
-    logger.info("Running inference")
+    logging.info("Running inference")
     original_xr = run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
     return original_xr
 
@@ -330,7 +361,7 @@ def run_basic_inference(
     x = initial_conditions.get_initial_condition_for_model(model, data_source, time)
 
     """Run a basic inference"""
-    logger.warning(
+    logging.warning(
         f" BASIC inference_ensemble using a basic inference model: {model}, data_source: {data_source}  time: {time} with initial_conditions {x.shape} "
     )
 
@@ -347,7 +378,7 @@ def run_basic_inference(
     coords["channel"] = model.out_channel_names
     coords["time"] = times
     
-    logger.warning(f" ran inference for model for times: {times} and for channels {model.out_channel_names} with stacked np_arrays output {stacked.shape}")
+    logging.warning(f" ran inference for model for times: {times} and for channels {model.out_channel_names} with stacked np_arrays output {stacked.shape}")
     
     return xarray.DataArray(
         stacked, dims=["time", "history", "channel", "lat", "lon"], coords=coords
@@ -373,13 +404,13 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
         # Convert the time list to a list of datetime objects
         time_list = [datetime(1900, 1, 1) + timedelta(hours=t) for t in time_list]
         
-        logger.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
+        logging.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
         # Find the index of the start time
         
         start_index = min(range(len(time_list)), key=lambda i: abs(time_list[i] - start_time))
         # Calculate the end index
         end_index = min(start_index + k, len(time_list))
-        logger.warning(f"  {start_index}   {end_index} ")
+        logging.warning(f"  {start_index}   {end_index} ")
         
         # Calculate the number of chunks needed
         num_chunks = int(math.ceil((end_index - start_index) / chunk_size))
@@ -401,7 +432,7 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
         # Concatenate the chunk data into arrays
         time_data = np.asarray(time_data, dtype=np.float32)
         var_data = np.asarray(var_data, dtype=np.float32)
-        logger.warning(f" time_data {time_data.shape}  var_data {var_data.shape}")
+        logging.warning(f" time_data {time_data.shape}  var_data {var_data.shape}")
         # Return the sliced time and variable data
         return time_data, var_data
 
@@ -435,13 +466,13 @@ def run_inference(
 
 
     if not data_source:
-        logger.warning(f">> inside data source model.in_channel_names: {model.in_channel_names} ")
+        logging.warning(f">> inside data source model.in_channel_names: {model.in_channel_names} ")
         data_source = initial_conditions.get_data_source(
             model.in_channel_names,
             initial_condition_source=weather_event.properties.initial_condition_source,
             netcdf=weather_event.properties.netcdf,
         )
-        logger.warning(f" >> data_source_cds: {type(data_source)}")
+        logging.warning(f" >> data_source_cds: {type(data_source)}")
 
     date_obj = weather_event.properties.start_time
 
@@ -459,15 +490,15 @@ def run_inference(
     # nc_file = netCDF4.Dataset( original_dir_path , 'r')
     # x_shape torch.Size([1, 1, 73, 721, 1440]) 
     # Get the dimensions of the data variable
-    logger.warning(f" >> FINAL_X_batch {var_slice.shape} ")
+    logging.warning(f" >> FINAL_X_batch {var_slice.shape} ")
     input_frames =  torch.from_numpy(var_slice).transpose(1, 0).to(model.device)
-    logger.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
+    logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
 
     dist = DistributedManager()
     n_ensemble_global = config.ensemble_members
     n_ensemble = n_ensemble_global // dist.world_size
     if n_ensemble == 0:
-        logger.warning("World size is larger than global number of ensembles.")
+        logging.warning("World size is larger than global number of ensembles.")
         n_ensemble = n_ensemble_global
 
     # Set random seed
@@ -503,7 +534,7 @@ def run_inference(
     for idx, frame in enumerate(input_frames):
         x = input_frames[idx:idx+1,].unsqueeze(0)
         output_file_path = os.path.join( output_path, f"{start_time.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
-        logger.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
+        logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
         with DS(output_file_path, "w", format="NETCDF4") as nc:
             # assign global attributes
             nc.model = config.weather_model
@@ -536,11 +567,11 @@ def run_inference(
                 ),
                 progress=progress,
             )
-            logger.warning(f" >> After_ensemble_ Data {data.shape} ")
+            logging.warning(f" >> After_ensemble_ Data {data.shape} ")
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
-    logger.info(f"Ensemble forecast finished, saved to: {output_file_path}")
+    logging.info(f"Ensemble forecast finished, saved to: {output_file_path}")
     return None
 
 if __name__ == "__main__":

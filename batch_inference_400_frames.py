@@ -1,27 +1,30 @@
 import importlib.util
 import json
 import logging
-import os
+import os,re
+from tqdm import tqdm
 import sys
 from datetime import datetime
+import numpy as np
 
-# With the enviroment variables set now we import Earth-2 MIP
-from earth2mip import batch_inference_ensemble, registry
-from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
-from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rmse_torch, unlog_tp_torch
-
-import dotenv
-import xarray
-from geopy import geocoders
 import configparser
 
-
-
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.colors import TwoSlopeNorm
 
 #  added for reading the correct login creds for cdsapi
 configur = configparser.ConfigParser()
 username = "gupt1075"	
 configur.read( f"/scratch/gilbreth/{username}/fcnv2/config.ini")
+
+import dotenv
+import xarray
+from geopy import geocoders
 
 #  added for reading custom earth2mip codebase
 sys.path.append(f"/scratch/gilbreth/{username}/fcnv2/earth2mip")
@@ -36,19 +39,27 @@ day_month = now.strftime("%B_%d_")
 os.makedirs(f"/scratch/gilbreth/{username}/fcnv2/logs/", exist_ok=True)
 
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s -  %(message)s",
+    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
     datefmt="%m/%d/%Y %H:%M:%S",
     level=logging.INFO,
-    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_inf_2_{day_month}.log",
+    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_Metrics_{day_month}.log",
 )
 
 
 dotenv.load_dotenv()
 
+# With the enviroment variables set now we import Earth-2 MIP
+from earth2mip import batch_inference_ensemble, registry
+from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
+
+from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rmse_torch, unlog_tp_torch
+
+
+
 logging.warning("Fetching model package...")
-
-
 package = registry.get_model("fcnv2")
+
+
 
 
 logging.warning("loading FCNv2 small model, this can take a bit")
