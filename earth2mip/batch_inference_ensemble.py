@@ -445,7 +445,7 @@ def run_inference(
     tmp_path =  f"/scratch/gilbreth/{username}/fcnv2/cds_files_batch/"
     original_dir_path = f"{tmp_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc" 
 
-    num_steps_frames= 75
+    num_steps_frames= 7
     
     time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , start_time, num_steps_frames)
     # Open the NetCDF4 file
@@ -533,7 +533,7 @@ def run_inference(
         torch.distributed.barrier(group)
 
     logger.info(f"Ensemble forecast finished, saved to: {output_file_path}")
-    return original_xr
+    return None
 
 if __name__ == "__main__":
     main()
