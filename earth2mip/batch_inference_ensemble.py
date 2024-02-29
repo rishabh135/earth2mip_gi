@@ -162,8 +162,9 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
-                logger.warning(f" >> Saving data at step {k} of {n_steps}.")
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
+                logger.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
+                
                 update_netcdf(
                     regridder(data),
                     diagnostics,
@@ -176,6 +177,8 @@ def run_ensembles(
 
             if k == n_steps:
                 break
+
+        return data
 
         # if restart_frequency is not None:
         #     save_restart(
@@ -351,6 +354,59 @@ def run_basic_inference(
     )
 
 
+
+
+def datetime_to_netcdf_time(start_time, base_time):
+    base_time = datetime.strptime(base_time, "%Y-%m-%d %H:%M:%S.%f")
+    diff = start_time - base_time
+    return diff.total_seconds() / 3600 # Convert to hours
+    
+
+
+
+def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6), chunk_size=1000):
+    # Open the NetCDF file
+    with Dataset(file_path) as nc_file:
+        # Get the time variable
+        time_var = nc_file.variables['time']
+        time_list = time_var[:].tolist()
+        # Convert the time list to a list of datetime objects
+        time_list = [datetime(1900, 1, 1) + timedelta(hours=t) for t in time_list]
+        
+        logger.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
+        # Find the index of the start time
+        
+        start_index = min(range(len(time_list)), key=lambda i: abs(time_list[i] - start_time))
+        # Calculate the end index
+        end_index = min(start_index + k, len(time_list))
+        logger.warning(f"  {start_index}   {end_index} ")
+        
+        # Calculate the number of chunks needed
+        num_chunks = int(math.ceil((end_index - start_index) / chunk_size))
+        # Initialize empty lists to store the time and variable data
+        time_data = []
+        var_data = []
+        # Loop through the chunks
+        
+        for i in range(num_chunks):
+            # Calculate the indices for the current chunk
+            chunk_start = start_index + i * chunk_size
+            chunk_end = min(start_index + (i + 1) * chunk_size, end_index)
+            # Slice the time and variable data for the current chunk
+            time_chunk = time_var[chunk_start:chunk_end]
+            var_chunk = nc_file.variables['z'][chunk_start:chunk_end]
+            # Append the chunk data to the lists
+            time_data.append(time_chunk)
+            var_data.append(var_chunk)
+        # Concatenate the chunk data into arrays
+        time_data = np.asarray(time_data, dtype=np.float32)
+        var_data = np.asarray(var_data, dtype=np.float32)
+        logger.warning(f" time_data {time_data.shape}  var_data {var_data.shape}")
+        # Return the sliced time and variable data
+        return time_data, var_data
+
+
+
 def run_inference(
     model: TimeLoop,
     config: EnsembleRun,
@@ -388,55 +444,6 @@ def run_inference(
         logger.warning(f" >> data_source_cds: {type(data_source)}")
 
     date_obj = weather_event.properties.start_time
-
-    def datetime_to_netcdf_time(start_time, base_time):
-        base_time = datetime.strptime(base_time, "%Y-%m-%d %H:%M:%S.%f")
-        diff = start_time - base_time
-        return diff.total_seconds() / 3600 # Convert to hours
-        
-    
-   
-
-    def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6), chunk_size=1000):
-        # Open the NetCDF file
-        with Dataset(file_path) as nc_file:
-            # Get the time variable
-            time_var = nc_file.variables['time']
-            time_list = time_var[:].tolist()
-            # Convert the time list to a list of datetime objects
-            time_list = [datetime(1900, 1, 1) + timedelta(hours=t) for t in time_list]
-            
-            logger.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
-            # Find the index of the start time
-            
-            start_index = min(range(len(time_list)), key=lambda i: abs(time_list[i] - start_time))
-            # Calculate the end index
-            end_index = min(start_index + k, len(time_list))
-            logger.warning(f"  {start_index}   {end_index} ")
-            
-            # Calculate the number of chunks needed
-            num_chunks = int(math.ceil((end_index - start_index) / chunk_size))
-            # Initialize empty lists to store the time and variable data
-            time_data = []
-            var_data = []
-            # Loop through the chunks
-            
-            for i in range(num_chunks):
-                # Calculate the indices for the current chunk
-                chunk_start = start_index + i * chunk_size
-                chunk_end = min(start_index + (i + 1) * chunk_size, end_index)
-                # Slice the time and variable data for the current chunk
-                time_chunk = time_var[chunk_start:chunk_end]
-                var_chunk = nc_file.variables['z'][chunk_start:chunk_end]
-                # Append the chunk data to the lists
-                time_data.append(time_chunk)
-                var_data.append(var_chunk)
-            # Concatenate the chunk data into arrays
-            time_data = np.asarray(time_data, dtype=np.float32)
-            var_data = np.asarray(var_data, dtype=np.float32)
-            logger.warning(f" time_data {time_data.shape}  var_data {var_data.shape}")
-            # Return the sliced time and variable data
-            return time_data, var_data
 
 
     start_time = datetime(2020, 1, 1, 0, 0, 0)
@@ -507,7 +514,7 @@ def run_inference(
             nc.institution = "Purdue"
             nc.Conventions = "CF-1.10"
 
-            run_ensembles(
+            data = run_ensembles(
                 weather_event=weather_event,
                 model=model,
                 perturb=perturb,
@@ -529,6 +536,7 @@ def run_inference(
                 ),
                 progress=progress,
             )
+            logger.warning(f" >> After_ensemble_ Data {data.shape} ")
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 

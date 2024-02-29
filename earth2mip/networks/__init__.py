@@ -26,6 +26,10 @@ import numpy as np
 import torch
 from modulus.utils.zenith_angle import cos_zenith_angle
 
+logging.getLogger("networks_init_inference").setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 import earth2mip.grid
 from earth2mip import (
     ModelRegistry,
@@ -153,7 +157,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         super().__init__()
         self.time_dependent = depends_on_time(model.forward)
         
-        logging.warning(f"inside eart2mip/earth2mip/networks.__init__.py this is the main inference call")
+        logger.warning(f"inside eart2mip/earth2mip/networks.__init__.py this is the main inference call")
         # TODO probably delete this line
         # if not isinstance(model, modulus.Module):
         #     model = Wrapper(model)
@@ -232,7 +236,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
 
             _, n_time_levels, n_channels, _, _ = x.shape
             
-            logging.warning(f" __init__.py iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
+            logger.warning(f" __init__.py iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
             if normalize:
@@ -250,13 +254,16 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                     x += self.source(x_with_units, time) / self.scale * dt
                     
                 # x shape
+                
+                logger.warning(f" ####### STEP_before_model {x.shape}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
+               
                 x = self.model(x, time)
                 time = time + self.time_step
 
                 # create args and kwargs for future use
                 restart = dict(x=x, normalize=False, time=time)
                 out = self.scale * x[:, -1] + self.center
-                logging.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
+                logger.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
                 
                 yield time, out, restart
 
@@ -307,7 +314,7 @@ def _load_package(package, metadata, device) -> time_loop.TimeLoop:
     # Attempt to see if Earth2 MIP has entry point registered already
     # Read meta data from file if not present
     package.path = "/scratch/gilbreth/gupt1075/fcnv2/earth2mip/earth2mip/networks/fcnv2"
-    logging.warning(
+    logger.warning(
         f" Inside load package  in new model {package.get('name')}   path {package.path} \n metadata {package.get('metadata.json')}  \n directory :  {dir(package)} "
     )
     if metadata is None:
@@ -354,15 +361,15 @@ def get_model(
 
     """
     url = urllib.parse.urlparse(model)
-    # write out all arguments and attributes of registry object to logging file
+    # write out all arguments and attributes of registry object to logger file
 
-    logging.warning(
+    logger.warning(
         f" Model name inside init.get_model() {model}    path:     {registry.path}  \n     weight path: {registry.get_weight_path} \n { dir(registry) } "
     )
 
-    logging.warning(f" >>>  url_scheme {url.scheme}  model: {model}")
+    logger.warning(f" >>>  url_scheme {url.scheme}  model: {model}")
 
-    logging.warning(f" Model name inside init.get_model metadata:  {metadata} ")
+    logger.warning(f" Model name inside init.get_model metadata:  {metadata} ")
 
     if url.scheme == "e2mip":
         package = registry.get_model(model)
