@@ -165,17 +165,17 @@ def run_ensembles(
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
-                logging.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
+                # logging.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
                 
-                update_netcdf(
-                    regridder(data),
-                    diagnostics,
-                    domains,
-                    batch_id,
-                    time_count,
-                    model.grid,
-                    model.out_channel_names,
-                )
+                # update_netcdf(
+                #     regridder(data),
+                #     diagnostics,
+                #     domains,
+                #     batch_id,
+                #     time_count,
+                #     model.grid,
+                #     model.out_channel_names,
+                # )
 
             if k == n_steps:
                 break
@@ -193,9 +193,9 @@ def run_ensembles(
 
 
 def main(config=None, nc_file_path=None):
-    logging.warning(
-        f" Inside inference_ensemble and using standard args with weather_model config: {config} "
-    )
+    # logging.warning(
+    #     f" Inside inference_ensemble and using standard args with weather_model config: {config} "
+    # )
 
     if config is None:
         parser = argparse.ArgumentParser()
@@ -225,11 +225,6 @@ def main(config=None, nc_file_path=None):
     # Set up parallel
 
     
-    
-    
-    logging.warning(
-        f" Inside inference_ensemble insitialuzed distributed manager setting parallel trainig with config {config} "
-    )
     # DistributedManager.initialize()
     # device = DistributedManager().device
 
@@ -243,7 +238,6 @@ def main(config=None, nc_file_path=None):
     
     group = torch.distributed.group.WORLD
 
-    # logging.warning(f" device {device} group {group}")
     
 
     logging.info(f"Earth-2 MIP config loaded {config}")
@@ -254,8 +248,10 @@ def main(config=None, nc_file_path=None):
         model,
         config,
     )
-    logging.info("Running inference")
+    logging.info(f"Starting inference")
     acc_numpy_arr = run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
+    logging.info(f" After inference {acc_numpy_arr.shape}  {acc_numpy_arr}")
+    
     return acc_numpy_arr
 
 def get_initializer(
@@ -409,7 +405,6 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
         return time_data, var_data
 
 
-
 def run_inference(
     model: TimeLoop,
     config: EnsembleRun,
@@ -463,8 +458,8 @@ def run_inference(
 
 
     logging.warning(f" date_obj = {date_obj} ")
-    simulated_frames = 100  
-    num_steps_frames= simulated_frames + config.simulation_length + 5
+    number_of_frames = 2
+    num_steps_frames= number_of_frames + config.simulation_length + 5
     time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
     
     
@@ -475,9 +470,9 @@ def run_inference(
     # nc_file = netCDF4.Dataset( original_dir_path , 'r')
     # x_shape torch.Size([1, 1, 73, 721, 1440]) 
     # Get the dimensions of the data variable
-    logging.warning(f" >> MOST IMPORTANT VAR_SLICE {var_slice.shape} ")
+    logging.warning(f" >> MOST IMPORTANT VAR DATA {var_slice.shape} ")
     input_frames =  torch.from_numpy(var_slice).transpose(1, 0).to(model.device)
-    # logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
+    logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
 
     dist = DistributedManager()
     n_ensemble_global = config.ensemble_members
@@ -515,10 +510,10 @@ def run_inference(
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
 
 
-    acc_list = [ [] for _ in range(config.simulation_length) ]
+    acc_list = [ [] for _ in range(number_of_frames) ]
 
-    logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for {num_steps_frames} consecutive frames and doing it in depth of {config.simulation_length} ")
-    for idx, frame in enumerate(input_frames[:config.simulation_length]):
+    logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for 3 consecutive frames and doing it in depth of 7 ")
+    for idx, frame in enumerate(input_frames[:number_of_frames]):
         x = input_frames[idx:idx+1,].unsqueeze(0)
         output_file_path = os.path.join( output_path, f"{date_obj.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
         logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
@@ -558,21 +553,21 @@ def run_inference(
         predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
         original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
         # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-        # logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
+        logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
         # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
         
         # predicted_tensor = predicted_tensor.transpose(0,1)[0]
         for ridx in  range(predicted_tensor.shape[0]):
             # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-            val = original_tensor[ridx:ridx+1,0]
-            val2 = predicted_tensor[ridx:ridx+1,0]
+            val = original_tensor[ridx,0]
+            val2 = predicted_tensor[ridx,0]
             tmp_original_data = np.expand_dims(val, axis=0)
             tmp_pred_data = np.expand_dims(val2, axis=0)
-            # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data : {tmp_pred_data.shape}  ")
+            # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
             acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
         
     acc_numpy_arr = np.asarray(acc_list)
-    logging.warning(f" acc_values {acc_numpy_arr.shape}  {acc_numpy_arr}") 
+    logging.warning(f" acc_values {acc_numpy_arr.shape}") 
         
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)

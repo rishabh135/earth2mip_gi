@@ -84,8 +84,8 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 6,
-    "simulated_frames" : 100,
+    "simulation_length": 2,
+    "simulated_frames" : 2,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -134,7 +134,7 @@ acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
 
 
 
-logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
+logging.warning(f" >>> ACC_NUMPY_Arr shape {acc_numpy_arr.shape} ")
 
 
 

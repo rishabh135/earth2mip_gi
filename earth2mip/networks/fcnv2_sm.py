@@ -153,6 +153,13 @@ def load(package, *, pretrained=True, device="cuda"):
 
     
     
+    # logging.warning(f" >>> NETWORKS/FCNV2_SM.py  climatology  local_center {local_center.shape} and local_std {local_std.shape}  ")
+    
+    # local_center = local_center[:, 41:42]
+    # local_std = local_std[:, 41:42]
+    
+    # logging.warning(f" >>> NETWORKS/FCNV2_SM.py  climatology  local_center after_indexing {local_center.shape} and local_std after_indexing {local_std.shape}  ")
+    
     
     weights_path = package.get("weights.tar")
     weights = torch.load(weights_path, map_location=device)
@@ -161,17 +168,6 @@ def load(package, *, pretrained=True, device="cuda"):
 
     grid = earth2mip.grid.equiangular_lat_lon_grid(721, 1440)
     dt = datetime.timedelta(hours=6)
-
-
-
-
-    # logging.warning(f" >>> NETWORKS/FCNV2_SM.py  climatology  local_center {local_center.shape} and local_std {local_std.shape}  ")
-    
-    # local_center = local_center[:, 41:42]
-    # local_std = local_std[:, 41:42]
-    
-    # logging.warning(f" >>> NETWORKS/FCNV2_SM.py  climatology  local_center after_indexing {local_center.shape} and local_std after_indexing {local_std.shape}  ")
-    
 
     inference = networks.Inference(
         core_model,
