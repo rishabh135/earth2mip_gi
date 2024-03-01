@@ -36,7 +36,7 @@ sys.path.append(f"/scratch/gilbreth/{username}/fcnv2/earth2mip")
 now = datetime.now()
 # Format the date to get the day and month
 day_month = now.strftime("%B_%d_")
-
+now_time_fully_formatted = now.strftime("%B_%d_%Y_%H_%M_%S")
 os.makedirs(f"/scratch/gilbreth/{username}/fcnv2/logs/", exist_ok=True)
 
 logging.basicConfig(
@@ -84,8 +84,8 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 2,
-    "simulated_frames" : 2,
+    "simulation_length": 15,
+    "simulated_frames" : 10,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -132,7 +132,7 @@ simulation_length = config["simulation_length"]
 config_str = json.dumps(config)
 acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
 
-
+acc_numpy_arr = np.abs(acc_numpy_arr)
 
 logging.warning(f" >>> ACC_NUMPY_Arr shape {acc_numpy_arr.shape} ")
 
@@ -141,11 +141,12 @@ logging.warning(f" >>> ACC_NUMPY_Arr shape {acc_numpy_arr.shape} ")
 
 
 def plt_acc(acc_numpy_arr):
-    np.save(f"{output_path}/numpy_file_{start_time}_with_{simulation_length}_.npy", acc_numpy_arr)
+    np.save(f"{output_path}/numpy_file_{now_time_fully_formatted}_starting_time__{start_time}_with_{simulation_length}.npy", acc_numpy_arr)
     mu1 = acc_numpy_arr.mean(axis=0)
     sigma1 = acc_numpy_arr.std(axis=0)
+    # ci = np.percentile(acc_numpy_arr, 95, axis=0)
     acc_mean = np.mean(acc_numpy_arr, axis=0)
-    logging.warning(f" >>> MU  {mu1.shape} {sigma1.shape} ")
+    # logging.warning(f" >>> MU  {mu1.shape} {sigma1.shape} ")
     # plot it!
     fig, ax = plt.subplots(1)
     ax.plot( [0 + i*6 for i in range(simulation_length+1)] , acc_mean, "-", lw=2, label='Anomaly Correlation Coefficient (ACC) value')
@@ -156,7 +157,7 @@ def plt_acc(acc_numpy_arr):
     ax.set_xlabel(f'num of hours starting from {start_time}')
     ax.set_ylabel('Anomaly Correlation Coefficient (ACC)  value')
     # ax.grid()
-    plt.savefig(f"{output_path}/ACC_plot_z500_{start_time}_with_dates_.png")
+    plt.savefig(f"{output_path}/{now_time_fully_formatted}_ACC_plot_z500_starting_at_{start_time}_with_simulation_length_{simulation_length}.png")
 
 
 
@@ -178,8 +179,8 @@ def plot_ci_seaborn(data):
 
 
 
-# plt_acc(acc_numpy_arr)
-plot_ci_seaborn(acc_numpy_arr)
+plt_acc(acc_numpy_arr)
+# plot_ci_seaborn(acc_numpy_arr)
 
 
 # def open_ensemble(f, domain, chunks={"time": 1}):

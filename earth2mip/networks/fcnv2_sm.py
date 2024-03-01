@@ -140,7 +140,7 @@ def load(package, *, pretrained=True, device="cuda"):
     assert pretrained  # noqa
 
     config_path = pathlib.Path(__file__).parent / "fcnv2" / "sfnonet.yaml"
-    logging.warning(f" insider networks/fcnv2_sm.py {config_path} ")
+    logging.warning(f" insider networks/fcnv2_sm.py loading climatology with 41st index as z500 ")
     params = fcnv2.YParams(config_path.as_posix(), "sfno_73ch")
     params.img_crop_shape_x = 721
     params.img_crop_shape_y = 1440

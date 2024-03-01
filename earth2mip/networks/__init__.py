@@ -237,20 +237,20 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
             # remove channels
 
             _, n_time_levels, n_channels, _, _ = x.shape
-            logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
+            # logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
             if (self.normalize):
                 x = (x - self.center) / self.scale
 
-            logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
+            # logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
             
 
             # yield initial time for convenience
             restart = dict(x=x, normalize=False, time=time)
             yield time, self.scale * x[:, -1] + self.center, restart
 
-            logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
+            # logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
             
             while True:
                 if self.source:
@@ -263,7 +263,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 
                 unique_axis_2 = len(torch.unique(x.squeeze(), dim=0)) == 1
                 # Check if the tensor is repeated along axis 0
-                logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
+                # logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
                
                 x = self.model(x, time)
                 time = time + self.time_step
@@ -271,7 +271,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 # create args and kwargs for future use
                 restart = dict(x=x, normalize=False, time=time)
                 out = self.scale * x[:, -1] + self.center
-                logger.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
+                # logger.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
                 
                 yield time, out, restart
 
