@@ -237,13 +237,13 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
             # remove channels
 
             _, n_time_levels, n_channels, _, _ = x.shape
-            # logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
+            logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
             if (self.normalize):
                 x = (x - self.center) / self.scale
 
-            # logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
+            logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
             
 
             # yield initial time for convenience
@@ -287,11 +287,11 @@ def _default_inference(package, metadata: schema.Model, device, normalize):
 
     model = loader(package, pretrained=True)
 
-    center_path = package.get("global_means.npy")
-    scale_path = package.get("global_stds.npy")
+    center_path = package.get("z_means.npy")
+    scale_path = package.get("z_stds.npy")
     center = np.load(center_path)
     scale = np.load(scale_path)
-    logger.warning(f" >> Center path shape {center.shape} scale_shape {scale.shape} ")
+    logger.warning(f" >> CENTER path shape {center.shape} scale_shape {scale.shape} ")
 
     assert metadata.in_channels_names == metadata.out_channels_names  # noqa
 
