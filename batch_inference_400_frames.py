@@ -83,7 +83,7 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 7,
+    "simulation_length": 5,
     "weather_event": {
         "properties": {
             "name": "Globe",

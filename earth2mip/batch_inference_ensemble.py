@@ -35,6 +35,10 @@ from netCDF4 import Dataset as DS
 
 import earth2mip.grid
 
+from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rmse_torch, unlog_tp_torch
+
+
+
 __all__ = ["run_inference"]
 
 # need to import initial conditions first to avoid unfortunate
@@ -182,9 +186,11 @@ def run_ensembles(
         time_count = -1
 
         # for time, data, restart in iterator:
-        output_tensor = {}
+        # output_tensor = {}
+        output_tensor = []
         for k, (time, data, _) in enumerate(iterator):
-            output_tensor[re.sub(r'\s+', '_',  str(time))] = data
+            output_tensor.append(data)
+            # output_tensor[re.sub(r'\s+', '_',  str(time))] = data
             # if restart_frequency and k % restart_frequency == 0:
             #     save_restart(
             #         restart,
@@ -481,15 +487,28 @@ def run_inference(
     date_obj = weather_event.properties.start_time
 
 
-    start_time = datetime(2020, 1, 1, 0, 0, 0)
-    end_time = datetime(2023, 9, 1, 23, 59, 59)
+
+
+
+    file_name_start = datetime(2020, 1, 1, 0, 0, 0)
+    file_name_end = datetime(2023, 9, 1, 23, 59, 59)
     username = "gupt1075"
     tmp_path =  f"/scratch/gilbreth/{username}/fcnv2/cds_files_batch/"
-    original_dir_path = f"{tmp_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc" 
+    original_dir_path = f"{tmp_path}" + f"NETCDF_{file_name_start.strftime('%Y-%m-%d')}_to_{file_name_end.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc" 
 
-    num_steps_frames= 11
+
+
+
+
+    logging.warning(f" date_obj = {date_obj} ")
+    number_of_frames = 3
+    num_steps_frames= number_of_frames + config.simulation_length + 5
+    time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
     
-    time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , start_time, num_steps_frames)
+    
+    
+    original_np_array = var_slice
+    
     # Open the NetCDF4 file
     # nc_file = netCDF4.Dataset( original_dir_path , 'r')
     # x_shape torch.Size([1, 1, 73, 721, 1440]) 
@@ -534,11 +553,12 @@ def run_inference(
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
 
 
-    original_xarray = input_frames
-    logging.warning(f" ORIGINAL_ARRAY : {original_xarray.shape} running ony for 3 consecutive frames and doing it in depth of 7 ")
-    for idx, frame in enumerate(input_frames[:3]):
+    acc_list = [ [] for _ in range(number_of_frames) ]
+
+    logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for 3 consecutive frames and doing it in depth of 7 ")
+    for idx, frame in enumerate(input_frames[:number_of_frames]):
         x = input_frames[idx:idx+1,].unsqueeze(0)
-        output_file_path = os.path.join( output_path, f"{start_time.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
+        output_file_path = os.path.join( output_path, f"{date_obj.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
         logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
         with DS(output_file_path, "w", format="NETCDF4") as nc:
             # assign global attributes
@@ -572,8 +592,26 @@ def run_inference(
                 ),
                 progress=progress,
             )
+            
+        predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
+        original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
+        # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
+        logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
+        # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
         
-        logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  output_tensor_keys: {output_tensor.keys()} ")
+        # predicted_tensor = predicted_tensor.transpose(0,1)[0]
+        for ridx in  range(predicted_tensor.shape[0]):
+            # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
+            val = original_tensor[ridx,0]
+            val2 = predicted_tensor[ridx,0]
+            tmp_original_data = np.expand_dims(val, axis=0)
+            tmp_pred_data = np.expand_dims(val2, axis=0)
+            logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+            acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
+        
+    acc_numpy_array = np.asarray(acc_list)
+    logging.warning(f" acc_values {acc_numpy_array.shape}") 
+        
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
