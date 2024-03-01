@@ -17,7 +17,7 @@
 import argparse
 import json
 import logging
-import os
+import os, re
 import sys
 from datetime import datetime
 from typing import Any, Optional
@@ -165,9 +165,11 @@ def run_ensembles(
         #     )
 
         iterator = model(initial_time, x)
-        
-        out_sum = summary(model, input_data=[initial_time, x], dtypes=[datetime, torch.long], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
-        logging.warning(" >> MODEL_summary: {} \n".format(out_sum))
+
+        # logging.warning(f" >> iterator {len(iterator)} iterator_shape: {iterator[0].shape} ")
+    
+        # out_sum = summary(model, input_data=[initial_time, x], dtypes=[datetime, torch.long], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
+        # logging.warning(" >> MODEL_summary: {} \n".format(out_sum))
 
     
         logging.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n ")
@@ -180,8 +182,9 @@ def run_ensembles(
         time_count = -1
 
         # for time, data, restart in iterator:
-
+        output_tensor = {}
         for k, (time, data, _) in enumerate(iterator):
+            output_tensor[re.sub(r'\s+', '_',  str(time))] = data
             # if restart_frequency and k % restart_frequency == 0:
             #     save_restart(
             #         restart,
@@ -209,15 +212,16 @@ def run_ensembles(
             if k == n_steps:
                 break
 
-        return data
 
-        # if restart_frequency is not None:
-        #     save_restart(
-        #         restart,
-        #         rank,
-        #         batch_id,
-        #         path=os.path.join(output_path, "restart", "end"),
-        #     )
+    return data, output_tensor
+
+    # if restart_frequency is not None:
+    #     save_restart(
+    #         restart,
+    #         rank,
+    #         batch_id,
+    #         path=os.path.join(output_path, "restart", "end"),
+    #     )
 
 
 def main(config=None, nc_file_path=None):
@@ -276,7 +280,7 @@ def main(config=None, nc_file_path=None):
 
     logging.info(f"Earth-2 MIP config loaded {config}")
     logging.info(f"Loading model onto device {device}")
-    model = get_model(config.weather_model, device=device)
+    model = get_model(config.weather_model, device=device, normalize=True)
     logging.info("Constructing initializer data source")
     perturb = get_initializer(
         model,
@@ -483,14 +487,14 @@ def run_inference(
     tmp_path =  f"/scratch/gilbreth/{username}/fcnv2/cds_files_batch/"
     original_dir_path = f"{tmp_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc" 
 
-    num_steps_frames= 7
+    num_steps_frames= 11
     
     time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , start_time, num_steps_frames)
     # Open the NetCDF4 file
     # nc_file = netCDF4.Dataset( original_dir_path , 'r')
     # x_shape torch.Size([1, 1, 73, 721, 1440]) 
     # Get the dimensions of the data variable
-    logging.warning(f" >> FINAL_X_batch {var_slice.shape} ")
+    logging.warning(f" >> MOST IMPORTANT VAR DATA {var_slice.shape} ")
     input_frames =  torch.from_numpy(var_slice).transpose(1, 0).to(model.device)
     logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
 
@@ -530,8 +534,9 @@ def run_inference(
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
 
 
-
-    for idx, frame in enumerate(input_frames):
+    original_xarray = input_frames
+    logging.warning(f" ORIGINAL_ARRAY : {original_xarray.shape} running ony for 3 consecutive frames and doing it in depth of 7 ")
+    for idx, frame in enumerate(input_frames[:3]):
         x = input_frames[idx:idx+1,].unsqueeze(0)
         output_file_path = os.path.join( output_path, f"{start_time.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
         logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
@@ -545,7 +550,7 @@ def run_inference(
             nc.institution = "Purdue"
             nc.Conventions = "CF-1.10"
 
-            data = run_ensembles(
+            data, output_tensor = run_ensembles(
                 weather_event=weather_event,
                 model=model,
                 perturb=perturb,
@@ -567,7 +572,8 @@ def run_inference(
                 ),
                 progress=progress,
             )
-            logging.warning(f" >> After_ensemble_ Data {data.shape} ")
+        
+        logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  output_tensor_keys: {output_tensor.keys()} ")
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 

@@ -135,6 +135,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         n_history: int = 0,
         time_step=datetime.timedelta(hours=6),
         channel_names=None,
+        normalize=True,
     ):
         """
         Args:
@@ -173,6 +174,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         self.time_step = time_step
         self.n_history = n_history
         self.source = source
+        self.normalize = normalize
 
         center = torch.from_numpy(np.squeeze(center)).float()
         scale = torch.from_numpy(np.squeeze(scale)).float()
@@ -199,7 +201,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         time: datetime.datetime,
         x: torch.Tensor,
         restart: Optional[Any] = None,
-        normalize=True,
+        
     ) -> Iterator[Tuple[datetime.datetime, torch.Tensor, Any]]:
         """
         Args:
@@ -235,17 +237,21 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
             # remove channels
 
             _, n_time_levels, n_channels, _, _ = x.shape
-            
-            logger.warning(f" __init__.py iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
+            logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
-            if normalize:
+            if (self.normalize):
                 x = (x - self.center) / self.scale
+
+            logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
+            
 
             # yield initial time for convenience
             restart = dict(x=x, normalize=False, time=time)
             yield time, self.scale * x[:, -1] + self.center, restart
 
+            logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
+            
             while True:
                 if self.source:
                     #  unnormalizing the output
@@ -255,7 +261,9 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                     
                 # x shape
                 
-                logger.warning(f" ####### STEP_before_model {x.shape}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
+                unique_axis_2 = len(torch.unique(x.squeeze(), dim=0)) == 1
+                # Check if the tensor is repeated along axis 0
+                logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
                
                 x = self.model(x, time)
                 time = time + self.time_step
@@ -268,7 +276,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 yield time, out, restart
 
 
-def _default_inference(package, metadata: schema.Model, device):
+def _default_inference(package, metadata: schema.Model, device, normalize):
     if metadata.architecture == "pickle":
         loader = loaders.pickle
     elif metadata.architecture_entrypoint:
@@ -292,6 +300,7 @@ def _default_inference(package, metadata: schema.Model, device):
         grid=earth2mip.grid.from_enum(metadata.grid),
         n_history=metadata.n_history,
         time_step=metadata.time_step,
+        normalize=normalize,
     )
     inference.to(device)
     return inference
@@ -310,7 +319,7 @@ def _load_package_builtin(package, device, name) -> time_loop.TimeLoop:
     raise ValueError(f"{name} not in {names_found}.")
 
 
-def _load_package(package, metadata, device) -> time_loop.TimeLoop:
+def _load_package(package, metadata, device, normalize) -> time_loop.TimeLoop:
     # Attempt to see if Earth2 MIP has entry point registered already
     # Read meta data from file if not present
     package.path = "/scratch/gilbreth/gupt1075/fcnv2/earth2mip/earth2mip/networks/fcnv2"
@@ -328,13 +337,14 @@ def _load_package(package, metadata, device) -> time_loop.TimeLoop:
         return inference_loader(package, device=device, **metadata.entrypoint.kwargs)
     else:
         warnings.warn("No loading entry point found, using default inferencer")
-        return _default_inference(package, metadata, device=device)
+        return _default_inference(package, metadata, device=device, normalize=normalize)
 
 
 def get_model(
     model: str,
     registry: ModelRegistry = registry,
     device="cpu",
+    normalize=True,
     metadata: Optional[schema.Model] = None,
 ) -> time_loop.TimeLoop:
     """
@@ -376,10 +386,10 @@ def get_model(
         return _load_package_builtin(package, device, name=url.netloc)
     elif url.scheme == "":
         package = registry.get_model(model)
-        return _load_package(package, metadata, device)
+        return _load_package(package, metadata, device, normalize)
     else:
         package = model_registry.Package(root=model, seperator="/")
-        return _load_package(package, metadata, device)
+        return _load_package(package, metadata, device, normalize)
 
 
 class Identity(torch.nn.Module):
