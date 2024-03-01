@@ -8,6 +8,7 @@ from datetime import datetime
 import numpy as np
 
 import configparser
+import seaborn as sns
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -83,7 +84,7 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 25,
+    "simulation_length": 6,
     "simulated_frames" : 100,
     "weather_event": {
         "properties": {
@@ -147,9 +148,10 @@ def plt_acc(acc_numpy_arr):
     logging.warning(f" >>> MU  {mu1.shape} {sigma1.shape} ")
     # plot it!
     fig, ax = plt.subplots(1)
-    ax.plot( [0 + i*6 for i in range(simulation_length+1)] , acc_mean, lw=2, label='Anomaly Correlation Coefficient (ACC) value')
-    ax.fill_between(  acc_mean, mu1+sigma1, mu1-sigma1, facecolor='C0', alpha=0.4)
-    ax.set_title(f"Acc plot for all {simulation_length+1} frames ")
+    ax.plot( [0 + i*6 for i in range(simulation_length+1)] , acc_mean, "-", lw=2, label='Anomaly Correlation Coefficient (ACC) value')
+    ax.fill_between(  acc_mean, mu1+sigma1, mu1-sigma1, alpha=0.2)
+    
+    ax.set_title(f"Acc plot for all {simulation_length} frames ")
     ax.legend(loc='upper left')
     ax.set_xlabel(f'num of hours starting from {start_time}')
     ax.set_ylabel('Anomaly Correlation Coefficient (ACC)  value')
@@ -158,8 +160,26 @@ def plt_acc(acc_numpy_arr):
 
 
 
-plt_acc(acc_numpy_arr)
 
+def plot_ci_seaborn(data):
+    # Calculate the 95th percentile confidence interval for each frame
+    ci = np.percentile(data, 95, axis=1)
+    lower, upper = ci[:, np.newaxis], ci[:, np.newaxis]
+    # Calculate the mean for each frame
+    mean = np.mean(data, axis=1)[:, np.newaxis]
+    # Create a line plot of the mean values
+    sns.lineplot(x=np.arange(mean.shape[0]), y=mean, label='Mean')
+    # Shade the area between the lower and upper confidence intervals
+    plt.fill_between(np.arange(mean.shape[0]), lower, upper, alpha=0.2, label='95% CI')
+    plt.legend()
+    plt.savefig(f"{output_path}/ACC_seaborn_plot_z500_{start_time}_with_dates_.png")
+    np.save(f"{output_path}/numpy_file_{start_time}_with_{simulation_length}_.npy", acc_numpy_arr)
+    
+
+
+
+# plt_acc(acc_numpy_arr)
+plot_ci_seaborn(acc_numpy_arr)
 
 
 # def open_ensemble(f, domain, chunks={"time": 1}):

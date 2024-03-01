@@ -250,7 +250,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
             restart = dict(x=x, normalize=False, time=time)
             yield time, self.scale * x[:, -1] + self.center, restart
 
-            # logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
+            logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
             
             while True:
                 if self.source:
@@ -263,7 +263,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 
                 unique_axis_2 = len(torch.unique(x.squeeze(), dim=0)) == 1
                 # Check if the tensor is repeated along axis 0
-                # logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
+                logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
                
                 x = self.model(x, time)
                 time = time + self.time_step
@@ -289,14 +289,17 @@ def _default_inference(package, metadata: schema.Model, device, normalize):
 
     center_path = package.get("global_means.npy")
     scale_path = package.get("global_stds.npy")
+    center = np.load(center_path)
+    scale = np.load(scale_path)
+    logger.warning(f" >> Center path shape {center.shape} scale_shape {scale.shape} ")
 
     assert metadata.in_channels_names == metadata.out_channels_names  # noqa
 
     inference = Inference(
         model=model,
         channel_names=metadata.in_channels_names,
-        center=np.load(center_path),
-        scale=np.load(scale_path),
+        center=center,
+        scale=scale,
         grid=earth2mip.grid.from_enum(metadata.grid),
         n_history=metadata.n_history,
         time_step=metadata.time_step,

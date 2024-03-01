@@ -463,7 +463,7 @@ def run_inference(
 
 
     logging.warning(f" date_obj = {date_obj} ")
-    simulated_frames = 100
+    simulated_frames = 100  
     num_steps_frames= simulated_frames + config.simulation_length + 5
     time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
     
@@ -564,12 +564,12 @@ def run_inference(
         # predicted_tensor = predicted_tensor.transpose(0,1)[0]
         for ridx in  range(predicted_tensor.shape[0]):
             # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-            val = original_tensor[ridx,0]
-            val2 = predicted_tensor[ridx,0]
+            val = original_tensor[ridx:ridx+1,0]
+            val2 = predicted_tensor[ridx:ridx+1,0]
             tmp_original_data = np.expand_dims(val, axis=0)
             tmp_pred_data = np.expand_dims(val2, axis=0)
-            # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
-            acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
+            logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data : {tmp_pred_data.shape}  ")
+            acc_list[idx].append(abs(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True)))
         
     acc_numpy_arr = np.asarray(acc_list)
     logging.warning(f" acc_values {acc_numpy_arr.shape}") 
