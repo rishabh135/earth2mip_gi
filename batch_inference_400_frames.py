@@ -162,6 +162,7 @@ def plt_acc(acc_numpy_arr):
 
 
 def plot_ci_seaborn(data):
+    np.save(f"{output_path}/numpy_file_{start_time}_with_{simulation_length}_.npy", acc_numpy_arr)
     # Calculate the 95th percentile confidence interval for each frame
     ci = np.percentile(data, 95, axis=1)
     lower, upper = ci[:, np.newaxis], ci[:, np.newaxis]
@@ -173,7 +174,6 @@ def plot_ci_seaborn(data):
     plt.fill_between(np.arange(mean.shape[0]), lower, upper, alpha=0.2, label='95% CI')
     plt.legend()
     plt.savefig(f"{output_path}/ACC_seaborn_plot_z500_{start_time}_with_dates_.png")
-    np.save(f"{output_path}/numpy_file_{start_time}_with_{simulation_length}_.npy", acc_numpy_arr)
     
 
 

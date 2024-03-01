@@ -148,10 +148,12 @@ def load(package, *, pretrained=True, device="cuda"):
     params.N_out_channels = 73
 
     core_model = fcnv2.FourierNeuralOperatorNet(params).to(device)
-    logging.warning(f" getting climatologuy using local_center and local_std and loading model weights inside fcnv2_sm ")
     local_center = np.load(package.get("global_means.npy"))
     local_std = np.load(package.get("global_stds.npy"))
 
+    
+    
+    
     weights_path = package.get("weights.tar")
     weights = torch.load(weights_path, map_location=device)
     fixed_weights = _fix_state_dict_keys(weights["model_state"], add_module=False)
@@ -159,6 +161,17 @@ def load(package, *, pretrained=True, device="cuda"):
 
     grid = earth2mip.grid.equiangular_lat_lon_grid(721, 1440)
     dt = datetime.timedelta(hours=6)
+
+
+
+
+    # logging.warning(f" >>> NETWORKS/FCNV2_SM.py  climatology  local_center {local_center.shape} and local_std {local_std.shape}  ")
+    
+    # local_center = local_center[:, 41:42]
+    # local_std = local_std[:, 41:42]
+    
+    # logging.warning(f" >>> NETWORKS/FCNV2_SM.py  climatology  local_center after_indexing {local_center.shape} and local_std after_indexing {local_std.shape}  ")
+    
 
     inference = networks.Inference(
         core_model,

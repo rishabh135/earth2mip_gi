@@ -475,9 +475,9 @@ def run_inference(
     # nc_file = netCDF4.Dataset( original_dir_path , 'r')
     # x_shape torch.Size([1, 1, 73, 721, 1440]) 
     # Get the dimensions of the data variable
-    logging.warning(f" >> MOST IMPORTANT VAR DATA {var_slice.shape} ")
+    logging.warning(f" >> MOST IMPORTANT VAR_SLICE {var_slice.shape} ")
     input_frames =  torch.from_numpy(var_slice).transpose(1, 0).to(model.device)
-    logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
+    # logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
 
     dist = DistributedManager()
     n_ensemble_global = config.ensemble_members
@@ -568,11 +568,11 @@ def run_inference(
             val2 = predicted_tensor[ridx:ridx+1,0]
             tmp_original_data = np.expand_dims(val, axis=0)
             tmp_pred_data = np.expand_dims(val2, axis=0)
-            logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data : {tmp_pred_data.shape}  ")
-            acc_list[idx].append(abs(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True)))
+            # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data : {tmp_pred_data.shape}  ")
+            acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
         
     acc_numpy_arr = np.asarray(acc_list)
-    logging.warning(f" acc_values {acc_numpy_arr.shape}") 
+    logging.warning(f" acc_values {acc_numpy_arr.shape}  {acc_numpy_arr}") 
         
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)

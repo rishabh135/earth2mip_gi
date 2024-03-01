@@ -176,6 +176,8 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         self.source = source
         self.normalize = normalize
 
+        # logger.warning(f"  >>>> INFERENCE: Center")
+
         center = torch.from_numpy(np.squeeze(center)).float()
         scale = torch.from_numpy(np.squeeze(scale)).float()
         self.register_buffer("scale_org", scale)
@@ -237,20 +239,20 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
             # remove channels
 
             _, n_time_levels, n_channels, _, _ = x.shape
-            logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
+            # logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
             if (self.normalize):
                 x = (x - self.center) / self.scale
 
-            logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
+            # logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
             
 
             # yield initial time for convenience
             restart = dict(x=x, normalize=False, time=time)
             yield time, self.scale * x[:, -1] + self.center, restart
 
-            logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
+            # logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
             
             while True:
                 if self.source:
@@ -263,7 +265,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 
                 unique_axis_2 = len(torch.unique(x.squeeze(), dim=0)) == 1
                 # Check if the tensor is repeated along axis 0
-                logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
+                # logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
                
                 x = self.model(x, time)
                 time = time + self.time_step
@@ -287,11 +289,11 @@ def _default_inference(package, metadata: schema.Model, device, normalize):
 
     model = loader(package, pretrained=True)
 
-    center_path = package.get("z_means.npy")
-    scale_path = package.get("z_stds.npy")
+    center_path = package.get("global_means.npy")
+    scale_path = package.get("global_stds.npy")
     center = np.load(center_path)
     scale = np.load(scale_path)
-    logger.warning(f" >> CENTER path shape {center.shape} scale_shape {scale.shape} ")
+    # logger.warning(f" >> CENTER path shape {center.shape} scale_shape {scale.shape} ")
 
     assert metadata.in_channels_names == metadata.out_channels_names  # noqa
 
