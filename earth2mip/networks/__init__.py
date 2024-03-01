@@ -158,7 +158,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         super().__init__()
         self.time_dependent = depends_on_time(model.forward)
         
-        logger.warning(f"inside eart2mip/earth2mip/networks.__init__.py this is the main inference call")
+        # logger.warning(f"inside eart2mip/earth2mip/networks.__init__.py this is the main inference call")
         # TODO probably delete this line
         # if not isinstance(model, modulus.Module):
         #     model = Wrapper(model)
@@ -237,20 +237,20 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
             # remove channels
 
             _, n_time_levels, n_channels, _, _ = x.shape
-            logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
+            # logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
             assert n_time_levels == self.n_history + 1  # noqa
 
             if (self.normalize):
                 x = (x - self.center) / self.scale
 
-            logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
+            # logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
             
 
             # yield initial time for convenience
             restart = dict(x=x, normalize=False, time=time)
             yield time, self.scale * x[:, -1] + self.center, restart
 
-            logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
+            # logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
             
             while True:
                 if self.source:
@@ -263,7 +263,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 
                 unique_axis_2 = len(torch.unique(x.squeeze(), dim=0)) == 1
                 # Check if the tensor is repeated along axis 0
-                logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
+                # logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
                
                 x = self.model(x, time)
                 time = time + self.time_step
@@ -271,7 +271,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 # create args and kwargs for future use
                 restart = dict(x=x, normalize=False, time=time)
                 out = self.scale * x[:, -1] + self.center
-                logger.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
+                # logger.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
                 
                 yield time, out, restart
 
@@ -323,9 +323,7 @@ def _load_package(package, metadata, device, normalize) -> time_loop.TimeLoop:
     # Attempt to see if Earth2 MIP has entry point registered already
     # Read meta data from file if not present
     package.path = "/scratch/gilbreth/gupt1075/fcnv2/earth2mip/earth2mip/networks/fcnv2"
-    logger.warning(
-        f" Inside load package  in new model {package.get('name')}   path {package.path} \n metadata {package.get('metadata.json')}  \n directory :  {dir(package)} "
-    )
+    # logger.warning(f" Inside load package  in new model {package.get('name')}   path {package.path} \n metadata {package.get('metadata.json')}  \n directory :  {dir(package)} ")
     if metadata is None:
         local_path = package.get("metadata.json")
         with open(local_path) as f:
@@ -373,13 +371,13 @@ def get_model(
     url = urllib.parse.urlparse(model)
     # write out all arguments and attributes of registry object to logger file
 
-    logger.warning(
-        f" Model name inside init.get_model() {model}    path:     {registry.path}  \n     weight path: {registry.get_weight_path} \n { dir(registry) } "
-    )
+    # logger.warning(
+    #     f" Model name inside init.get_model() {model}    path:     {registry.path}  \n     weight path: {registry.get_weight_path} \n { dir(registry) } "
+    # )
 
-    logger.warning(f" >>>  url_scheme {url.scheme}  model: {model}")
+    # logger.warning(f" >>>  url_scheme {url.scheme}  model: {model}")
 
-    logger.warning(f" Model name inside init.get_model metadata:  {metadata} ")
+    # logger.warning(f" Model name inside init.get_model metadata:  {metadata} ")
 
     if url.scheme == "e2mip":
         package = registry.get_model(model)

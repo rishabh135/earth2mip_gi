@@ -83,7 +83,8 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 5,
+    "simulation_length": 25,
+    "simulated_frames" : 100,
     "weather_event": {
         "properties": {
             "name": "Globe",
@@ -126,8 +127,11 @@ nc_file_path = (
 
 
 simulation_length = config["simulation_length"]
+
 config_str = json.dumps(config)
 acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
+
+
 
 logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
 
@@ -136,20 +140,21 @@ logging.warning(f" all the configuration as sent to inference_ensemble {config_s
 
 
 def plt_acc(acc_numpy_arr):
+    np.save(f"{output_path}/numpy_file_{start_time}_with_{simulation_length}_.npy", acc_numpy_arr)
     mu1 = acc_numpy_arr.mean(axis=0)
     sigma1 = acc_numpy_arr.std(axis=0)
     acc_mean = np.mean(acc_numpy_arr, axis=0)
     logging.warning(f" >>> MU  {mu1.shape} {sigma1.shape} ")
     # plot it!
     fig, ax = plt.subplots(1)
-    ax.plot( [0 + i*6 for i in range(simulation_length+1)] , acc_mean, lw=2, label='Anomaly Correlation Coefficient (ACC)  value')
+    ax.plot( [0 + i*6 for i in range(simulation_length+1)] , acc_mean, lw=2, label='Anomaly Correlation Coefficient (ACC) value')
     ax.fill_between(  acc_mean, mu1+sigma1, mu1-sigma1, facecolor='C0', alpha=0.4)
-    ax.set_title(f"Acc plot for {simulation_length+1} frames for z500 variable  starting at {start_time}")
+    ax.set_title(f"Acc plot for all {simulation_length+1} frames ")
     ax.legend(loc='upper left')
     ax.set_xlabel(f'num of hours starting from {start_time}')
     ax.set_ylabel('Anomaly Correlation Coefficient (ACC)  value')
     # ax.grid()
-    plt.savefig(f"{output_path}/ACC_plot_z500_{start_time}_with_{simulation_length}_.png")
+    plt.savefig(f"{output_path}/ACC_plot_z500_{start_time}_with_dates_.png")
 
 
 

@@ -463,8 +463,8 @@ def run_inference(
 
 
     logging.warning(f" date_obj = {date_obj} ")
-    number_of_frames = 3
-    num_steps_frames= number_of_frames + config.simulation_length + 5
+    simulated_frames = 100
+    num_steps_frames= simulated_frames + config.simulation_length + 5
     time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
     
     
@@ -515,10 +515,10 @@ def run_inference(
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
 
 
-    acc_list = [ [] for _ in range(number_of_frames) ]
+    acc_list = [ [] for _ in range(config.simulation_length) ]
 
-    logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for 3 consecutive frames and doing it in depth of 7 ")
-    for idx, frame in enumerate(input_frames[:number_of_frames]):
+    logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for {num_steps_frames} consecutive frames and doing it in depth of {config.simulation_length} ")
+    for idx, frame in enumerate(input_frames[:config.simulation_length]):
         x = input_frames[idx:idx+1,].unsqueeze(0)
         output_file_path = os.path.join( output_path, f"{date_obj.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
         logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
@@ -558,7 +558,7 @@ def run_inference(
         predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
         original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
         # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-        logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
+        # logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
         # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
         
         # predicted_tensor = predicted_tensor.transpose(0,1)[0]
