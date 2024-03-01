@@ -114,10 +114,8 @@ start_time = datetime.strptime(
     config["weather_event"]["properties"]["start_time"], "%Y-%m-%d %H:%M:%S"
 ).strftime("%d_%B_%Y")
 
-
 output_path = config["output_path"]
 domains = config["weather_event"]["domains"][0]["name"]
-
 var_computed = config["weather_event"]["domains"][0]["diagnostics"][0]["channels"][0]
 
 
@@ -127,54 +125,56 @@ nc_file_path = (
 )
 
 
+simulation_length = config["simulation_length"]
 config_str = json.dumps(config)
-batch_inference_ensemble.main(config_str, nc_file_path)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
 
 logging.warning(f" all the configuration as sent to inference_ensemble {config_str} ")
 
 
 
-def open_ensemble(f, domain, chunks={"time": 1}):
-    time = xarray.open_dataset(f).time
-    root = xarray.open_dataset(f, decode_times=False)
-    ds = xarray.open_dataset(f, chunks=chunks, group=domain)
-    ds.attrs = root.attrs
-    return ds.assign_coords(time=time)
 
 
-logging.warning(
-    f"Saving ensembled output as a nc file with domains: {domains} and var_computed {var_computed}"
-)
-ensemble_members = config["ensemble_members"]
+def plt_acc(acc_numpy_arr):
+    mu1 = acc_numpy_arr.mean(axis=0)
+    sigma1 = acc_numpy_arr.std(axis=0)
+    acc_mean = np.mean(acc_numpy_arr, axis=0)
+    logging.warning(f" >>> MU  {mu1.shape} {sigma1.shape} ")
+    # plot it!
+    fig, ax = plt.subplots(1)
+    ax.plot( [0 + i*6 for i in range(simulation_length+1)] , acc_mean, lw=2, label='Anomaly Correlation Coefficient (ACC)  value')
+    ax.fill_between(  acc_mean, mu1+sigma1, mu1-sigma1, facecolor='C0', alpha=0.4)
+    ax.set_title(f"Acc plot for {simulation_length+1} frames for z500 variable  starting at {start_time}")
+    ax.legend(loc='upper left')
+    ax.set_xlabel(f'num of hours starting from {start_time}')
+    ax.set_ylabel('Anomaly Correlation Coefficient (ACC)  value')
+    # ax.grid()
+    plt.savefig(f"{output_path}/ACC_plot_z500_{start_time}_with_{simulation_length}_.png")
 
-ds = open_ensemble(
-    os.path.join(output_path, nc_file_path),
-    domains,
-)
 
-logging.warning(
-    f" >>>  ds.shape {ds}  start_time {start_time}  var_computed {var_computed}  \n ds keys : {ds.keys()} "
-)
+
+plt_acc(acc_numpy_arr)
+
+
+
+# def open_ensemble(f, domain, chunks={"time": 1}):
+#     time = xarray.open_dataset(f).time
+#     root = xarray.open_dataset(f, decode_times=False)
+#     ds = xarray.open_dataset(f, chunks=chunks, group=domain)
+#     ds.attrs = root.attrs
+#     return ds.assign_coords(time=time)
+
+
+# logging.warning(
+#     f"Saving ensembled output as a nc file with domains: {domains} and var_computed {var_computed}"
+# )
+# ensemble_members = config["ensemble_members"]
+
+# ds = open_ensemble(
+#     os.path.join(output_path, nc_file_path),
+#     domains,
+# )
+
+# logging.warning(
+#     f" >>>  ds.shape {ds}  start_time {start_time}  var_computed {var_computed}  \n ds keys : {ds.keys()} "
+# )

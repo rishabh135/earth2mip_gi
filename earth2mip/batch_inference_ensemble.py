@@ -19,10 +19,9 @@ import json
 import logging
 import os, re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 import pandas as pd
-
 
 from torchinfo import summary
 import cftime
@@ -32,7 +31,7 @@ import tqdm
 import xarray
 from modulus.distributed.manager import DistributedManager
 from netCDF4 import Dataset as DS
-
+import math 
 import earth2mip.grid
 
 from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rmse_torch, unlog_tp_torch
@@ -41,43 +40,6 @@ from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rm
 
 __all__ = ["run_inference"]
 
-# need to import initial conditions first to avoid unfortunate
-# GLIBC version conflict when importing xarray. There are some unfortunate
-# issues with the environment.
-from earth2mip import initial_conditions, regrid, time_loop
-from earth2mip._channel_stds import channel_stds
-from earth2mip.ensemble_utils import (
-    generate_bred_vector,
-    generate_noise_correlated,
-    generate_noise_grf,
-)
-from earth2mip.netcdf import initialize_netcdf, update_netcdf
-from earth2mip.networks import get_model
-from earth2mip.schema import EnsembleRun, PerturbationStrategy
-from earth2mip.time_loop import TimeLoop
-
-
-import os, math
-import sys
-from datetime import datetime, timedelta
-from typing import Any, Optional
-import pandas as pd
-
-from netCDF4 import Dataset
-
-
-from torchinfo import summary
-import cftime
-import numpy as np
-import torch
-import tqdm
-import xarray
-from modulus.distributed.manager import DistributedManager
-from netCDF4 import Dataset as DS
-
-import earth2mip.grid
-
-__all__ = ["run_inference"]
 
 # need to import initial conditions first to avoid unfortunate
 # GLIBC version conflict when importing xarray. There are some unfortunate
@@ -293,8 +255,8 @@ def main(config=None, nc_file_path=None):
         config,
     )
     logging.info("Running inference")
-    original_xr = run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
-    return original_xr
+    acc_numpy_arr = run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
+    return acc_numpy_arr
 
 def get_initializer(
     model,
@@ -407,7 +369,7 @@ def datetime_to_netcdf_time(start_time, base_time):
 
 def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6), chunk_size=1000):
     # Open the NetCDF file
-    with Dataset(file_path) as nc_file:
+    with DS(file_path) as nc_file:
         # Get the time variable
         time_var = nc_file.variables['time']
         time_list = time_var[:].tolist()
@@ -606,17 +568,17 @@ def run_inference(
             val2 = predicted_tensor[ridx,0]
             tmp_original_data = np.expand_dims(val, axis=0)
             tmp_pred_data = np.expand_dims(val2, axis=0)
-            logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+            # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
             acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
         
-    acc_numpy_array = np.asarray(acc_list)
-    logging.warning(f" acc_values {acc_numpy_array.shape}") 
+    acc_numpy_arr = np.asarray(acc_list)
+    logging.warning(f" acc_values {acc_numpy_arr.shape}") 
         
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
     logging.info(f"Ensemble forecast finished, saved to: {output_file_path}")
-    return None
+    return acc_numpy_arr
 
 if __name__ == "__main__":
     main()
