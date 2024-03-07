@@ -34,17 +34,24 @@ sys.path.append(f"/scratch/gilbreth/{username}/fcnv2/earth2mip")
 
 # Get the current date and time
 now = datetime.now()
+
 # Format the date to get the day and month
 day_month = now.strftime("%B_%d_")
+
+# Format the current date and time with a detailed format
 now_time_fully_formatted = now.strftime("%B_%d_%Y_%H_%M_%S")
+
+# Create the logs directory if it doesn't exist
 os.makedirs(f"/scratch/gilbreth/{username}/fcnv2/logs/", exist_ok=True)
 
+# Configure the logging settings
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-    datefmt="%m/%d/%Y %H:%M:%S",
-    level=logging.INFO,
-    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_Metrics_{day_month}.log",
+    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",  # Set the log message format
+    datefmt="%m/%d/%Y %H:%M:%S",  # Set the date format for log timestamps
+    level=logging.INFO,  # Set the logging level to INFO
+    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_Metrics_{day_month}.log",  # Set the log file path
 )
+
 
 
 dotenv.load_dotenv()
