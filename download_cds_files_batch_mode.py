@@ -57,29 +57,21 @@ CHANNEL_TO_CODE = {
  
  
  
- 
- 
- 
- 
- 
- 
+
+
 c.retrieve('reanalysis-era5-complete', {
     # Removed obsolete comments and streamlined the explanation
-    'date'    :  f"{start_time.strftime('%Y-%m-%d')}/to/{end_time.strftime('%Y-%m-%d')}",  # Specify the range of dates to download
-    'levelist': '500',              # pressure Levels 
-    'levtype' : 'pl',                        # Model levels
-    'param'   : '129',                       # Parameter code for geopotential
+    'date'    :  f"{start_time.strftime('%Y-%m-%d')}/to/{end_time.strftime('%Y-%m-%d')}",  # Specify the range of dates to download    
+    'levelist': '1/10/100/137',              # Levels from top (1) to lowest model level (137)
+    'levtype' : 'ml',                        # Model levels
+    'param'   : '129/130',                   # Parameter codes for geopotential height and temperature
     'stream'  : 'oper',                      # Operational data stream
     'time'    : '00/06/12/18',               # Times of day (in shorthand notation)
     'type'    : 'an',                        # Analysis type
-    'area'    : 'global',              # Geographical subarea: North/West/South/East
-    'grid'    : '0.25/0.25',                   # Grid resolution: latitude/longitude
+	'area'    : 'global',              		 # Geographical subarea: North/West/South/East
+	'grid'    : '0.25/0.25'
     'format'  : 'netcdf',                    # Output format, requires 'grid' to be specified
-}, f"{output_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc")        # Output filename
-
-
-
-
+}, f"{output_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5_73_channels.25.nc")   
 
 
 # module load netcdf
@@ -108,3 +100,20 @@ c.retrieve('reanalysis-era5-complete', {
 # 		z:units = "m**2 s**-2" ;
 # 		z:long_name = "Geopotential" ;
 # 		z:standard_name = "geopotential" ;
+
+
+
+
+# c.retrieve('reanalysis-era5-complete', {
+#     # Removed obsolete comments and streamlined the explanation
+#     'date'    :  f"{start_time.strftime('%Y-%m-%d')}/to/{end_time.strftime('%Y-%m-%d')}",  # Specify the range of dates to download
+#     'levelist': '500',              # pressure Levels 
+#     'levtype' : 'pl',                        # Model levels
+#     'param'   : '129',                       # Parameter code for geopotential
+#     'stream'  : 'oper',                      # Operational data stream
+#     'time'    : '00/06/12/18',               # Times of day (in shorthand notation)
+#     'type'    : 'an',                        # Analysis type
+#     'area'    : 'global',              # Geographical subarea: North/West/South/East
+#     'grid'    : '0.25/0.25',                   # Grid resolution: latitude/longitude
+#     'format'  : 'netcdf',                    # Output format, requires 'grid' to be specified
+# }, f"{output_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc")        # Output filename

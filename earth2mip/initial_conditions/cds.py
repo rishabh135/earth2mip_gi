@@ -93,6 +93,8 @@ class SingleLevelCode:
 
 
 def parse_channel(channel: str) -> Union[PressureLevelCode, SingleLevelCode]:
+    logger.warning(f" >> Channel: {channel} ")
+    
     if channel in CHANNEL_TO_CODE:
         return SingleLevelCode(CHANNEL_TO_CODE[channel])
     else:
@@ -130,6 +132,8 @@ class DataSource:
 
 
 def _get_cds_requests(codes, time, format):
+    
+    
     grid = (0.25, 0.25)
     area = (90, -180, -90, 180)
 
@@ -189,6 +193,7 @@ def _parse_files(
         a data array of all the codes
 
     """
+    logger.warning(f" >> _parse_files codes: {codes} ")
     arrays = [None] * len(codes)
     for path in files:
         with open(path) as f:
@@ -276,7 +281,7 @@ def _download_codes(client, codes, time, d) -> xarray.DataArray:
     with ThreadPoolExecutor(4) as pool:
         files = pool.map(download, requests)
 
-    logging.warning(f" files: {files}")
+    logger.warning(f" files: {files}")
 
     return _parse_files(codes, files)
 

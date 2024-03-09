@@ -71,6 +71,9 @@ def save_restart(restart, rank, batch_id, path):
     torch.save(restart, path)
 
 
+
+
+
 def run_ensembles(
     *,
     n_steps: int,
@@ -458,7 +461,7 @@ def run_inference(
 
 
     # logging.warning(f" date_obj = {date_obj} ")
-    number_of_frames = 10
+    number_of_frames = 20
     num_steps_frames= number_of_frames + config.simulation_length + 5
     time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
     
@@ -553,7 +556,7 @@ def run_inference(
         predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
         original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
         # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-        # logging.warning(f" >> VERY IMPORTANT after ensemble Data shape {data.shape}  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
+        logging.warning(f" >> VERY IMPORTANT after ensemble  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
         # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
         
         # predicted_tensor = predicted_tensor.transpose(0,1)[0]
