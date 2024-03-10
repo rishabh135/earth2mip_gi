@@ -81,6 +81,7 @@ class EnsembleRun(pydantic.BaseModel):
         noise_amplitude: The amplitude of the Gaussian noise to add to the initial conditions.
         noise_reddening: The noise reddening amplitude, 2.0 was the defualt set by A.G. work.
         simulation_length: The length of the simulation in timesteps.
+        n_initial_conidtions: The number of initial_conditions
         output_frequency: The frequency at which to write the output to file, in timesteps.
         use_cuda_graphs: Whether to use CUDA graphs to optimize the computation.
         seed: The random seed for the simulation.
@@ -101,6 +102,7 @@ class EnsembleRun(pydantic.BaseModel):
 
     weather_model: str
     simulation_length: int
+    n_initial_conditions: int
     # TODO make perturbation_strategy an Enum (see ChannelSet)
     perturbation_strategy: PerturbationStrategy = PerturbationStrategy.correlated
     perturbation_channels: Optional[List[str]] = None

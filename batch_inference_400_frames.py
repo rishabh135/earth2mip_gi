@@ -9,9 +9,7 @@ import numpy as np
 
 import configparser
 import seaborn as sns
-
 from scipy.stats import sem
-
 from glob import glob
 
 import cartopy.crs as ccrs
@@ -68,6 +66,8 @@ from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rm
 
 
 
+
+
 logging.warning("Fetching model package...")
 package = registry.get_model("fcnv2")
 
@@ -92,15 +92,18 @@ if not os.path.exists(cds_api):
         f.write(f"key: {uid}:{key}\n")
 
 
+
+
+
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 23,
-    "simulated_frames" : 20,
+    "simulation_length": 247,
+    "n_initial_conditions" : 13,
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-08-01 00:00:00",
+            "start_time": "2020-01-01 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -161,12 +164,15 @@ nc_file_path = (
 
 
 simulation_length = config["simulation_length"]
+n_initial_conditions = config["n_initial_conditions"]
+
 
 config_str = json.dumps(config)
 acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
 
-acc_numpy_arr = np.abs(acc_numpy_arr)
 
+
+acc_numpy_arr = np.abs(acc_numpy_arr)
 logging.warning(f" >>> ACC_NUMPY_Arr shape {acc_numpy_arr.shape} ")
 
 
@@ -174,7 +180,7 @@ logging.warning(f" >>> ACC_NUMPY_Arr shape {acc_numpy_arr.shape} ")
 
 
 def plt_acc(acc_numpy_arr, fld="z500", default_timedelta=6, start_year=2018):
-    np.save(f"{output_path}/numpy_file_{now_time_fully_formatted}_starting_time__{start_time}_with_{simulation_length}.npy", acc_numpy_arr)
+    np.save(f"{output_path}/saved_on_{now_time_fully_formatted}_starting_time__{start_time}_with_{simulation_length}.npy", acc_numpy_arr)
     mu1 = acc_numpy_arr.mean(axis=0)
     
     # Compute the total number of hours based on the array shape and default timedelta
@@ -197,14 +203,14 @@ def plt_acc(acc_numpy_arr, fld="z500", default_timedelta=6, start_year=2018):
       
     # ax.fill_between(  acc_mean, mu1+sigma1, mu1-sigma1, alpha=0.2)
     
-    plt.title(f"Acc plot for all {simulation_length} frames ")
+    plt.title(f"Acc plot for all {total_hours} hours  ")
 
     plt.xlabel(f'num of hours starting from {start_time}')
     plt.ylabel('Anomaly Correlation Coefficient (ACC)  value')
     # Add a legend to the plot
     plt.legend()
     # ax.grid()
-    plt.savefig(f"{output_path}/{now_time_fully_formatted}_ACC_plot_z500_starting_at_{start_time}_with_simulation_length_{simulation_length}.png")
+    plt.savefig(f"{output_path}/{now_time_fully_formatted}_ACC_plot_z500_starting_at_{start_time}_with_simulation_length_{total_hours/default_timedelta}frames.png")
 
 
 
@@ -294,3 +300,16 @@ plt_acc(acc_numpy_arr)
 # logging.warning(
 #     f" >>>  ds.shape {ds}  start_time {start_time}  var_computed {var_computed}  \n ds keys : {ds.keys()} "
 # )
+
+
+
+# from earth2mip.inference_medium_range import score_deterministic
+
+# scores = score_deterministic(time_loop,
+#     data_source=data_source,
+#     n=10,
+#     initial_times=[datetime.datetime(2018, 1, 1)],
+#     # fill in zeros for time-mean, will typically be grabbed from data.
+#     time_mean=np.zeros((7, 721, 1440))
+# )
+# >>>

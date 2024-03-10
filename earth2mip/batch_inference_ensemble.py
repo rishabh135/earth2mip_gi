@@ -56,6 +56,7 @@ from earth2mip.networks import get_model
 from earth2mip.schema import EnsembleRun, PerturbationStrategy
 from earth2mip.time_loop import TimeLoop
 
+logger = logging.getLogger("inference")
 
 
 def get_checkpoint_path(rank, batch_id, path):
@@ -67,10 +68,18 @@ def get_checkpoint_path(rank, batch_id, path):
 def save_restart(restart, rank, batch_id, path):
     path = get_checkpoint_path(rank, batch_id, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    logging.info(f"Saving restart file to {path}.")
+    logger.info(f"Saving restart file to {path}.")
     torch.save(restart, path)
 
 
+
+def find_index(ch):
+    """Find the index of a word in a list."""
+    CHANNELS = ["u10m","v10m","u100m","v100m","t2m","sp","msl","tcwv","u50","u100","u150","u200","u250","u300","u400","u500","u600","u700","u850","u925","u1000","v50","v100","v150","v200","v250","v300","v400","v500","v600","v700","v850","v925","v1000","z50","z100","z150","z200","z250","z300","z400","z500","z600","z700","z850","z925","z1000","t50","t100","t150","t200","t250","t300","t400","t500","t600","t700","t850","t925","t1000","r50","r100","r150","r200","r250","r300","r400","r500","r600","r700","r850","r925","r1000"]
+    try:
+        return CHANNELS.index(ch)
+    except ValueError:
+        print("Channel not found.")
 
 
 
@@ -104,27 +113,20 @@ def run_ensembles(
     time_units = initial_time.strftime("hours since %Y-%m-%d %H:%M:%S")
     nc["time"].units = time_units
     nc["time"].calendar = "standard"
-    logging.warning(f"  time_units {time_units}  n_ensembles {n_ensemble}, batch_size {batch_size} ")
+
     for batch_id in range(0, n_ensemble, batch_size):
-        logging.info(
-            f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}"
-        )
+        logger.info(f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}")
         batch_size = min(batch_size, n_ensemble - batch_id)
 
-
         x = x.repeat(batch_size, 1, 1, 1, 1)
-
-        # logging.warning(f" SKIPPING Perturb before perturb x-> {x.shape}   rank:  {rank}  batch_id {batch_id}")
-        # x = perturb(x, rank, batch_id, model.device)
-        
-        
+        x_start = perturb(x, rank, batch_id, model.device)
         # restart_dir = weather_event.properties.restart
 
         # TODO: figure out if needed
         # if restart_dir:
         #     path = get_checkpoint_path(rank, batch_id, restart_dir)
-        #     # TODO use logging
-        #     logging.info(f"Loading from restart from {path}")
+        #     # TODO use logger
+        #     logger.info(f"Loading from restart from {path}")
         #     kwargs = torch.load(path)
         # else:
         #     kwargs = dict(
@@ -133,16 +135,7 @@ def run_ensembles(
         #         time=time,
         #     )
 
-        iterator = model(initial_time, x)
-
-        # logging.warning(f" >> iterator {len(iterator)} iterator_shape: {iterator[0].shape} ")
-    
-        # out_sum = summary(model, input_data=[initial_time, x], dtypes=[datetime, torch.long], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
-        # logging.warning(" >> MODEL_summary: {} \n".format(out_sum))
-
-    
-        # logging.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n ")
-    
+        iterator = model(initial_time, x_start)
 
         # Check if stdout is connected to a terminal
         if sys.stderr.isatty() and progress:
@@ -151,11 +144,8 @@ def run_ensembles(
         time_count = -1
 
         # for time, data, restart in iterator:
-        # output_tensor = {}
-        output_tensor = []
+
         for k, (time, data, _) in enumerate(iterator):
-            output_tensor.append(data)
-            # output_tensor[re.sub(r'\s+', '_',  str(time))] = data
             # if restart_frequency and k % restart_frequency == 0:
             #     save_restart(
             #         restart,
@@ -167,36 +157,154 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
+                logger.debug(f"Saving data at step {k} of {n_steps}.")
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
-                # logging.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
-                
-                # update_netcdf(
-                #     regridder(data),
-                #     diagnostics,
-                #     domains,
-                #     batch_id,
-                #     time_count,
-                #     model.grid,
-                #     model.out_channel_names,
-                # )
+                update_netcdf(
+                    regridder(data),
+                    diagnostics,
+                    domains,
+                    batch_id,
+                    time_count,
+                    model.grid,
+                    model.out_channel_names,
+                )
 
             if k == n_steps:
                 break
 
+        # if restart_frequency is not None:
+        #     save_restart(
+        #         restart,
+        #         rank,
+        #         batch_id,
+        #         path=os.path.join(output_path, "restart", "end"),
+        #     )
 
-    return data, output_tensor
+    return data
 
-    # if restart_frequency is not None:
-    #     save_restart(
-    #         restart,
-    #         rank,
-    #         batch_id,
-    #         path=os.path.join(output_path, "restart", "end"),
-    #     )
+# def run_ensembles(
+#     *,
+#     n_steps: int,
+#     weather_event,
+#     model: TimeLoop,
+#     perturb,
+#     x,
+#     nc,
+#     domains,
+#     n_ensemble: int,
+#     batch_size: int,
+#     rank: int,
+#     output_frequency: int,
+#     output_grid: Optional[earth2mip.grid.LatLonGrid],
+#     date_obj: datetime,
+#     restart_frequency: Optional[int],
+#     output_path: str,
+#     restart_initial_directory: str = "",
+#     progress: bool = True,
+# ):
+#     if not output_grid:
+#         output_grid = model.grid
+
+#     regridder = regrid.get_regridder(model.grid, output_grid).to(model.device)
+
+#     diagnostics = initialize_netcdf(nc, domains, output_grid, n_ensemble, model.device)
+#     initial_time = date_obj
+#     time_units = initial_time.strftime("hours since %Y-%m-%d %H:%M:%S")
+#     nc["time"].units = time_units
+#     nc["time"].calendar = "standard"
+#     logger.warning(f"  time_units {time_units}  n_ensembles {n_ensemble}, batch_size {batch_size} ")
+#     for batch_id in range(0, n_ensemble, batch_size):
+#         logger.info(
+#             f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}"
+#         )
+#         batch_size = min(batch_size, n_ensemble - batch_id)
+
+
+#         x = x.repeat(batch_size, 1, 1, 1, 1)
+
+#         # logger.warning(f" SKIPPING Perturb before perturb x-> {x.shape}   rank:  {rank}  batch_id {batch_id}")
+#         # x = perturb(x, rank, batch_id, model.device)
+        
+        
+#         # restart_dir = weather_event.properties.restart
+
+#         # TODO: figure out if needed
+#         # if restart_dir:
+#         #     path = get_checkpoint_path(rank, batch_id, restart_dir)
+#         #     # TODO use logger
+#         #     logger.info(f"Loading from restart from {path}")
+#         #     kwargs = torch.load(path)
+#         # else:
+#         #     kwargs = dict(
+#         #         x=x,
+#         #         normalize=False,
+#         #         time=time,
+#         #     )
+
+#         iterator = model(initial_time, x)
+
+#         # logger.warning(f" >> iterator {len(iterator)} iterator_shape: {iterator[0].shape} ")
+    
+#         # out_sum = summary(model, input_data=[initial_time, x], dtypes=[datetime, torch.long], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
+#         # logger.warning(" >> MODEL_summary: {} \n".format(out_sum))
+
+    
+#         # logger.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n ")
+    
+
+#         # Check if stdout is connected to a terminal
+#         if sys.stderr.isatty() and progress:
+#             iterator = tqdm.tqdm(iterator, total=n_steps)
+
+#         time_count = -1
+
+#         # for time, data, restart in iterator:
+#         # output_tensor = {}
+#         output_tensor = []
+#         for k, (time, data, _) in enumerate(iterator):
+#             output_tensor.append(data)
+#             # output_tensor[re.sub(r'\s+', '_',  str(time))] = data
+#             # if restart_frequency and k % restart_frequency == 0:
+#             #     save_restart(
+#             #         restart,
+#             #         rank,
+#             #         batch_id,
+#             #         path=os.path.join(output_path, "restart", time.isoformat()),
+#             #     )
+
+#             # Saving the output
+#             if output_frequency and k % output_frequency == 0:
+#                 time_count += 1
+#                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
+#                 # logger.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
+                
+#                 # update_netcdf(
+#                 #     regridder(data),
+#                 #     diagnostics,
+#                 #     domains,
+#                 #     batch_id,
+#                 #     time_count,
+#                 #     model.grid,
+#                 #     model.out_channel_names,
+#                 # )
+
+#             if k == n_steps:
+#                 break
+
+
+#     return data, output_tensor
+
+# if restart_frequency is not None:
+#     save_restart(
+#         restart,
+#         rank,
+#         batch_id,
+#         path=os.path.join(output_path, "restart", "end"),
+#     )
 
 
 def main(config=None, nc_file_path=None):
-    # logging.warning(
+    # logger.warning(
     #     f" Inside inference_ensemble and using standard args with weather_model config: {config} "
     # )
 
@@ -237,23 +345,23 @@ def main(config=None, nc_file_path=None):
     else:
         device = torch.device("cpu")
     
-    # logging.warning(f" device {device}")
+    # logger.warning(f" device {device}")
     
     group = torch.distributed.group.WORLD
 
     
 
-    logging.info(f"Earth-2 MIP config loaded {config}")
-    logging.info(f"Loading model onto device {device}")
+    logger.info(f"Earth-2 MIP config loaded {config}")
+    logger.info(f"Loading model onto device {device}")
     model = get_model(config.weather_model, device=device, normalize=True)
-    logging.info("Constructing initializer data source")
+    logger.info("Constructing initializer data source")
     perturb = get_initializer(
         model,
         config,
     )
-    logging.info(f"Starting inference")
+    logger.info(f"Starting inference")
     acc_numpy_arr = run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
-    logging.info(f" After inference {acc_numpy_arr.shape}  {acc_numpy_arr}")
+    logger.info(f" After inference {acc_numpy_arr.shape}  {acc_numpy_arr}")
     
     return acc_numpy_arr
 
@@ -261,6 +369,7 @@ def get_initializer(
     model,
     config,
 ):
+    # logger.warning(f" type(config.diagnostics) {type(config.channel)}    ")
     def perturb(x, rank, batch_id, device):
         shape = x.shape
         if config.perturbation_strategy == PerturbationStrategy.gaussian:
@@ -301,8 +410,8 @@ def get_initializer(
                 scale.append(channel_stds[channel])
             else:
                 scale.append(0)
-        scale = torch.tensor(scale, device=x.device)
-
+        scale = torch.tensor(scale[find_index("z500"):find_index("z500")+1], device=x.device)
+        logger.info(f" x.shape {x.shape} ,   scale {scale.shape}   noise {noise.shape} ")
         if config.perturbation_channels is None:
             x += noise * scale[:, None, None]
         else:
@@ -332,7 +441,7 @@ def run_basic_inference(
     x = initial_conditions.get_initial_condition_for_model(model, data_source, time)
 
     """Run a basic inference"""
-    logging.warning(
+    logger.warning(
         f" BASIC inference_ensemble using a basic inference model: {model}, data_source: {data_source}  time: {time} with initial_conditions {x.shape} "
     )
 
@@ -349,7 +458,7 @@ def run_basic_inference(
     coords["channel"] = model.out_channel_names
     coords["time"] = times
     
-    logging.warning(f" ran inference for model for times: {times} and for channels {model.out_channel_names} with stacked np_arrays output {stacked.shape}")
+    logger.warning(f" ran inference for model for times: {times} and for channels {model.out_channel_names} with stacked np_arrays output {stacked.shape}")
     
     return xarray.DataArray(
         stacked, dims=["time", "history", "channel", "lat", "lon"], coords=coords
@@ -365,7 +474,6 @@ def datetime_to_netcdf_time(start_time, base_time):
     
 
 
-
 def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6), chunk_size=1000):
     # Open the NetCDF file
     with DS(file_path) as nc_file:
@@ -375,18 +483,19 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
         # Convert the time list to a list of datetime objects
         time_list = [datetime(1900, 1, 1) + timedelta(hours=t) for t in time_list]
         
-        logging.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
+        # logger.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
         # Find the index of the start time
         
         start_index = min(range(len(time_list)), key=lambda i: abs(time_list[i] - start_time))
         # Calculate the end index
         end_index = min(start_index + k, len(time_list))
-        logging.warning(f"  {start_index}   {end_index} ")
+        
+        # logger.warning(f"  {start_index}   {end_index} ")
         
         # Calculate the number of chunks needed
         num_chunks = int(math.ceil((end_index - start_index) / chunk_size))
         # Initialize empty lists to store the time and variable data
-        time_data = []
+        # time_data = []
         var_data = []
         # Loop through the chunks
         
@@ -395,17 +504,19 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
             chunk_start = start_index + i * chunk_size
             chunk_end = min(start_index + (i + 1) * chunk_size, end_index)
             # Slice the time and variable data for the current chunk
-            time_chunk = time_var[chunk_start:chunk_end]
+            # time_chunk = time_var[chunk_start:chunk_end]
             var_chunk = nc_file.variables['z'][chunk_start:chunk_end]
             # Append the chunk data to the lists
-            time_data.append(time_chunk)
-            var_data.append(var_chunk)
+            # time_data.append(time_chunk)
+            var_data.append(torch.from_numpy(var_chunk))
+            
         # Concatenate the chunk data into arrays
-        time_data = np.asarray(time_data, dtype=np.float32)
-        var_data = np.asarray(var_data, dtype=np.float32)
-        logging.warning(f" time_data {time_data.shape}  var_data {var_data.shape}")
+        # time_data = np.asarray(time_data, dtype=np.float32)
+        # Stack the tensors along a new dimension (dim=0)
+        var_tensor = torch.stack(var_data, dim=0)
+        logger.warning(f" var_tensor {var_tensor.shape}")
         # Return the sliced time and variable data
-        return time_data, var_data
+        return var_tensor
 
 
 def run_inference(
@@ -436,13 +547,13 @@ def run_inference(
 
 
     if not data_source:
-        logging.warning(f">> inside data source model.in_channel_names: {model.in_channel_names} ")
+        logger.warning(f">> inside data source model.in_channel_names: {model.in_channel_names} ")
         data_source = initial_conditions.get_data_source(
             model.in_channel_names,
             initial_condition_source=weather_event.properties.initial_condition_source,
             netcdf=weather_event.properties.netcdf,
         )
-        logging.warning(f" >> data_source_cds: {type(data_source)}")
+        logger.warning(f" >> data_source_cds: {type(data_source)}")
 
     date_obj = weather_event.properties.start_time
 
@@ -460,28 +571,20 @@ def run_inference(
 
 
 
-    # logging.warning(f" date_obj = {date_obj} ")
-    number_of_frames = 20
-    num_steps_frames= number_of_frames + config.simulation_length + 5
-    time_slice, var_slice= index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
+    n_initial_conditions = config.n_initial_conditions
+    num_steps_frames = n_initial_conditions + 2
+    initial_condition_tensors = index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
     
     
     
-    original_np_array = var_slice
-    
-    # Open the NetCDF4 file
-    # nc_file = netCDF4.Dataset( original_dir_path , 'r')
-    # x_shape torch.Size([1, 1, 73, 721, 1440]) 
-    # Get the dimensions of the data variable
-    # logging.warning(f" >> MOST IMPORTANT VAR DATA {var_slice.shape} ")
-    input_frames =  torch.from_numpy(var_slice).transpose(1, 0).to(model.device)
-    # logging.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
+    input_frames =  initial_condition_tensors.transpose(1, 0).to(model.device)
+    logger.warning(f" loading CDS files and calling intiial_conditiosn from inside inference_ensemble.py date_obj {date_obj}, n_initial_conditions: {input_frames.shape}  >>  {type(input_frames)}")
 
     dist = DistributedManager()
     n_ensemble_global = config.ensemble_members
     n_ensemble = n_ensemble_global // dist.world_size
     if n_ensemble == 0:
-        logging.warning("World size is larger than global number of ensembles.")
+        logger.warning("World size is larger than global number of ensembles.")
         n_ensemble = n_ensemble_global
 
     # Set random seed
@@ -513,38 +616,24 @@ def run_inference(
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
 
 
-    acc_list = [ [] for _ in range(number_of_frames) ]
+    acc_list = [ [] for _ in range(n_initial_conditions) ]
 
-    # logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for 3 consecutive frames and doing it in depth of 7 ")
-    for idx, frame in enumerate(input_frames[:number_of_frames]):
-        x = input_frames[idx:idx+1,].unsqueeze(0)
-        output_file_path = os.path.join( output_path, f"{date_obj.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
-        # logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
-        with DS(output_file_path, "w", format="NETCDF4") as nc:
-            # assign global attributes
-            nc.model = config.weather_model
-            nc.config = config.json()
-            nc.weather_event = weather_event.json()
-            nc.date_created = datetime.now().isoformat()
-            nc.history = " ".join(sys.argv)
-            nc.institution = "Purdue"
-            nc.Conventions = "CF-1.10"
-
-            data, output_tensor = run_ensembles(
-                weather_event=weather_event,
-                model=model,
-                perturb=perturb,
-                nc=nc,
-                domains=weather_event.domains,
-                x=x,
-                n_ensemble=n_ensemble,
-                n_steps=config.simulation_length,
-                output_frequency=config.output_frequency,
-                batch_size=config.ensemble_batch_size,
-                rank=dist.rank,
-                date_obj=date_obj,
-                restart_frequency=config.restart_frequency,
-                output_path=output_path,
+    # logger.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for 3 consecutive frames and doing it in depth of 7 ")
+    # output_file_path = os.path.join( output_path, f"{date_obj.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
+    # logger.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
+    # with DS(output_file_path, "w", format="NETCDF4") as nc:
+    #     # assign global attributes
+    #     nc.model = config.weather_model
+    #     nc.config = config.json()
+    #     nc.weather_event = weather_event.json()
+    #     nc.date_created = datetime.now().isoformat()
+    #     nc.history = " ".join(sys.argv)
+    #     nc.institution = "Purdue"
+    #     nc.Conventions = "CF-1.10"
+    
+    for idx, frame in enumerate(input_frames[:n_initial_conditions]):
+        x = input_frames[idx:idx+1,].unsqueeze(0) 
+        data, output_tensor = run_ensembles( weather_event=weather_event, model=model, perturb=perturb, nc=None, domains=weather_event.domains, x=x, n_ensemble=n_ensemble, n_steps=config.simulation_length, output_frequency=config.output_frequency, batch_size=config.ensemble_batch_size, rank=dist.rank, date_obj=date_obj, restart_frequency=config.restart_frequency, output_path=None,
                 output_grid=(
                     earth2mip.grid.from_enum(config.output_grid)
                     if config.output_grid
@@ -552,11 +641,11 @@ def run_inference(
                 ),
                 progress=progress,
             )
-            
+
         predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
-        original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
+        logger.warning(f" >> VERY IMPORTANT after ensemble  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {input_frames.shape}   {type(predicted_tensor)}  {type(input_frames)} ")
+        original_tensor = torch.transpose( input_frames[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
         # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-        logging.warning(f" >> VERY IMPORTANT after ensemble  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
         # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
         
         # predicted_tensor = predicted_tensor.transpose(0,1)[0]
@@ -566,16 +655,15 @@ def run_inference(
             val2 = predicted_tensor[ridx,0]
             tmp_original_data = np.expand_dims(val, axis=0)
             tmp_pred_data = np.expand_dims(val2, axis=0)
-            # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+            # logger.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
             acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
         
     acc_numpy_arr = np.asarray(acc_list)
-    logging.warning(f" acc_values {acc_numpy_arr.shape}  {acc_numpy_arr}") 
+    logger.warning(f" acc_values {acc_numpy_arr.shape}  {acc_numpy_arr}") 
         
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
-    logging.info(f"Ensemble forecast finished, saved to: {output_file_path}")
     return acc_numpy_arr
 
 if __name__ == "__main__":

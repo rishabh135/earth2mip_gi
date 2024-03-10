@@ -235,6 +235,7 @@ def score_deterministic(
         return time_average_metrics(series)
 
 
+
 def time_average_metrics(series: pd.Series) -> xr.Dataset:
     """Average the metrics across initial time and compute ACC, RMSE
 
