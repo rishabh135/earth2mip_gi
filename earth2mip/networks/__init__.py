@@ -287,8 +287,8 @@ def _default_inference(package, metadata: schema.Model, device, normalize):
 
     model = loader(package, pretrained=True)
 
-    center_path = package.get("global_means.npy")
-    scale_path = package.get("global_stds.npy")
+    center_path = package.get("z_means.npy")
+    scale_path = package.get("z_stds.npy")
 
     assert metadata.in_channels_names == metadata.out_channels_names  # noqa
 

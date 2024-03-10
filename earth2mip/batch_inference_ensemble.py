@@ -86,7 +86,6 @@ def find_index(ch):
 def run_ensembles(
     *,
     n_steps: int,
-    weather_event,
     model: TimeLoop,
     perturb,
     x,
@@ -145,7 +144,8 @@ def run_ensembles(
 
         # for time, data, restart in iterator:
 
-        for k, (time, data, _) in enumerate(iterator):
+        for k, (time, data, extra) in enumerate(iterator):
+            logger.warning(f"  time: {time} >>  data {data.shape}"  )
             # if restart_frequency and k % restart_frequency == 0:
             #     save_restart(
             #         restart,
@@ -492,7 +492,6 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
         
         # logger.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
         # Find the index of the start time
-        
         start_index = min(range(len(time_list)), key=lambda i: abs(time_list[i] - start_time))
         # Calculate the end index
         end_index = min(start_index + k, len(time_list))
@@ -633,8 +632,7 @@ def run_inference(
             nc.institution = "Purdue"
             nc.Conventions = "CF-1.10"
 
-            data, output_tensor = run_ensembles(
-                weather_event=weather_event,
+            output_tensor = run_ensembles(
                 model=model,
                 perturb=perturb,
                 nc=nc,
@@ -655,8 +653,8 @@ def run_inference(
                 ),
                 progress=progress,
             )
-            
-        predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
+        logger.warning(f" predicted_tensor {type(output_tensor)} {output_tensor.shape}    ")
+        predicted_tensor = output_tensor.detach().cpu().numpy()
         logging.warning(f" >> VERY IMPORTANT predicted_tensor: {predicted_tensor.shape}  >>> input_frames: {input_frames.shape} ")
         original_tensor = torch.transpose( input_frames[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
         # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
