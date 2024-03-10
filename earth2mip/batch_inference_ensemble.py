@@ -365,11 +365,12 @@ def main(config=None, nc_file_path=None):
     
     return acc_numpy_arr
 
+
+
 def get_initializer(
     model,
     config,
 ):
-    # logger.warning(f" type(config.diagnostics) {type(config.channel)}    ")
     def perturb(x, rank, batch_id, device):
         shape = x.shape
         if config.perturbation_strategy == PerturbationStrategy.gaussian:
@@ -406,12 +407,16 @@ def get_initializer(
         # When field is not in known normalization dictionary set scale to 0
         scale = []
         for i, channel in enumerate(model.in_channel_names):
+            if(channel != "z500"):
+                continue
+            
+            logger.warning(f" channel {channel} ")
             if channel in channel_stds:
                 scale.append(channel_stds[channel])
             else:
                 scale.append(0)
-        scale = torch.tensor(scale[find_index("z500"):find_index("z500")+1], device=x.device)
-        logger.info(f" x.shape {x.shape} ,   scale {scale.shape}   noise {noise.shape} ")
+        scale = torch.tensor(scale, device=x.device)
+        logger.warning(f" scale {scale.shape}  x: {x.shape}  noise: {noise.shape} ")
         if config.perturbation_channels is None:
             x += noise * scale[:, None, None]
         else:
@@ -429,6 +434,8 @@ def get_initializer(
         return x
 
     return perturb
+
+
 
 
 def run_basic_inference(
@@ -508,7 +515,7 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
             var_chunk = nc_file.variables['z'][chunk_start:chunk_end]
             # Append the chunk data to the lists
             # time_data.append(time_chunk)
-            var_data.append(torch.from_numpy(var_chunk))
+            var_data.append(torch.from_numpy(var_chunk.astype(np.float32)))
             
         # Concatenate the chunk data into arrays
         # time_data = np.asarray(time_data, dtype=np.float32)
@@ -556,11 +563,6 @@ def run_inference(
         logger.warning(f" >> data_source_cds: {type(data_source)}")
 
     date_obj = weather_event.properties.start_time
-
-
-
-
-
     file_name_start = datetime(2020, 1, 1, 0, 0, 0)
     file_name_end = datetime(2023, 9, 1, 23, 59, 59)
     username = "gupt1075"
@@ -572,8 +574,7 @@ def run_inference(
 
 
     n_initial_conditions = config.n_initial_conditions
-    num_steps_frames = n_initial_conditions + 2
-    initial_condition_tensors = index_netcdf_in_chunks(original_dir_path , date_obj, num_steps_frames)
+    initial_condition_tensors = index_netcdf_in_chunks(original_dir_path , date_obj, n_initial_conditions + 2)
     
     
     
@@ -614,26 +615,39 @@ def run_inference(
             f.write(config.json())
 
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
-
-
-    acc_list = [ [] for _ in range(n_initial_conditions) ]
-
-    # logger.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for 3 consecutive frames and doing it in depth of 7 ")
-    # output_file_path = os.path.join( output_path, f"{date_obj.strftime('%d_%B_%Y')}__timedelta_{idx}__" + nc_file_path)
-    # logger.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
-    # with DS(output_file_path, "w", format="NETCDF4") as nc:
-    #     # assign global attributes
-    #     nc.model = config.weather_model
-    #     nc.config = config.json()
-    #     nc.weather_event = weather_event.json()
-    #     nc.date_created = datetime.now().isoformat()
-    #     nc.history = " ".join(sys.argv)
-    #     nc.institution = "Purdue"
-    #     nc.Conventions = "CF-1.10"
     
-    for idx, frame in enumerate(input_frames[:n_initial_conditions]):
-        x = input_frames[idx:idx+1,].unsqueeze(0) 
-        data, output_tensor = run_ensembles( weather_event=weather_event, model=model, perturb=perturb, nc=None, domains=weather_event.domains, x=x, n_ensemble=n_ensemble, n_steps=config.simulation_length, output_frequency=config.output_frequency, batch_size=config.ensemble_batch_size, rank=dist.rank, date_obj=date_obj, restart_frequency=config.restart_frequency, output_path=None,
+    acc_list = [ [] for _ in range(config.n_initial_conditions) ]
+    
+    # logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  acc_list {acc_list} running ony for 3 consecutive frames and doing it in depth of 7 ")
+    for idx, frame in enumerate(input_frames[:config.n_initial_conditions]):
+        x = input_frames[idx:idx+1,].unsqueeze(0)
+        output_file_path = os.path.join( output_path, f"{date_obj.strftime('%d_%B_%Y')}__timedelta_{idx}.npy")
+        # logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
+        with DS(output_file_path, "w", format="NETCDF4") as nc:
+            # assign global attributes
+            nc.model = config.weather_model
+            nc.config = config.json()
+            nc.weather_event = weather_event.json()
+            nc.date_created = datetime.now().isoformat()
+            nc.history = " ".join(sys.argv)
+            nc.institution = "Purdue"
+            nc.Conventions = "CF-1.10"
+
+            data, output_tensor = run_ensembles(
+                weather_event=weather_event,
+                model=model,
+                perturb=perturb,
+                nc=nc,
+                domains=weather_event.domains,
+                x=x,
+                n_ensemble=n_ensemble,
+                n_steps=config.simulation_length,
+                output_frequency=config.output_frequency,
+                batch_size=config.ensemble_batch_size,
+                rank=dist.rank,
+                date_obj=date_obj,
+                restart_frequency=config.restart_frequency,
+                output_path=output_path,
                 output_grid=(
                     earth2mip.grid.from_enum(config.output_grid)
                     if config.output_grid
@@ -641,9 +655,9 @@ def run_inference(
                 ),
                 progress=progress,
             )
-
+            
         predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
-        logger.warning(f" >> VERY IMPORTANT after ensemble  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {input_frames.shape}   {type(predicted_tensor)}  {type(input_frames)} ")
+        logging.warning(f" >> VERY IMPORTANT predicted_tensor: {predicted_tensor.shape}  >>> input_frames: {input_frames.shape} ")
         original_tensor = torch.transpose( input_frames[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
         # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
         # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
@@ -655,15 +669,16 @@ def run_inference(
             val2 = predicted_tensor[ridx,0]
             tmp_original_data = np.expand_dims(val, axis=0)
             tmp_pred_data = np.expand_dims(val2, axis=0)
-            # logger.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+            # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
             acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
         
     acc_numpy_arr = np.asarray(acc_list)
-    logger.warning(f" acc_values {acc_numpy_arr.shape}  {acc_numpy_arr}") 
+    logging.warning(f" acc_values {acc_numpy_arr.shape}  {acc_numpy_arr}") 
         
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
+    logging.info(f"Ensemble forecast finished, saved to: {output_file_path}")
     return acc_numpy_arr
 
 if __name__ == "__main__":
