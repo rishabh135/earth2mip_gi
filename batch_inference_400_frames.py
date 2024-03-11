@@ -104,7 +104,7 @@ config = {
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-01-04 00:00:00",
+            "start_time": "2020-01-05 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
