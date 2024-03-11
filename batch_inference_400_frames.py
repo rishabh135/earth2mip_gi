@@ -15,6 +15,7 @@ from glob import glob
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.colors as mcolors
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -51,7 +52,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",  # Set the log message format
     datefmt="%m/%d/%Y %H:%M:%S",  # Set the date format for log timestamps
     level=logging.INFO,  # Set the logging level to INFO
-    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/batch_Metrics_{day_month}.log",  # Set the log file path
+    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/{day_month}_one_channel.log",  # Set the log file path
 )
 
 
@@ -98,12 +99,12 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 10,
-    "n_initial_conditions" : 13,
+    "simulation_length": 187,
+    "n_initial_conditions" : 1,
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-01-01 00:00:00",
+            "start_time": "2020-01-04 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -114,7 +115,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/z500",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/proposal",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
@@ -158,7 +159,7 @@ var_computed = config["weather_event"]["domains"][0]["diagnostics"][0]["channels
 
 
 nc_file_path = (
-    f"var_{var_computed}_starting_at_{start_time}_ensemble_{config['simulation_length']}"
+    f"var_{var_computed}_starting_at_{start_time}"
     + ".nc"
 )
 
@@ -175,12 +176,12 @@ acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
 acc_numpy_arr = np.abs(acc_numpy_arr)
 logging.warning(f" >>> ACC_NUMPY_Arr shape {acc_numpy_arr.shape} ")
 
-
-
+#  saving numpy file of output_tensors
+np.save(f"{output_path}/saved_on_{now_time_fully_formatted}_starting_time__{start_time}_with_{simulation_length}.npy", acc_numpy_arr)
+    
 
 
 def plt_acc(acc_numpy_arr, fld="z500", default_timedelta=6, start_year=2018):
-    np.save(f"{output_path}/saved_on_{now_time_fully_formatted}_starting_time__{start_time}_with_{simulation_length}.npy", acc_numpy_arr)
     mu1 = acc_numpy_arr.mean(axis=0)
     
     # Compute the total number of hours based on the array shape and default timedelta
@@ -188,18 +189,26 @@ def plt_acc(acc_numpy_arr, fld="z500", default_timedelta=6, start_year=2018):
     
     sigma1 = acc_numpy_arr.std(axis=0)
     # ci = np.percentile(acc_numpy_arr, 95, axis=0)
-    acc_mean = np.mean(acc_numpy_arr, axis=0)
+    
+    
+    r, c = acc_numpy_arr.shape
+    colors = cm.rainbow(np.linspace(0, 1, r)) # generate r different colors
+    for i in range(r):
+        plt.plot( range(0, total_hours, default_timedelta) , acc_numpy_arr[i, :], color=colors[i]) # plot each line curve with a different color
+    
+    
+    # acc_mean = np.mean(acc_numpy_arr, axis=0)
     # logging.warning(f" >>> MU  {mu1.shape} {sigma1.shape} ")
     # plot it!
     # fig, ax = plt.subplots(1)
-    plt.plot( range(0, total_hours, default_timedelta) , acc_mean, "-", lw=2, label='Anomaly Correlation Coefficient (ACC) value')
+    # plt.plot( range(0, total_hours, default_timedelta) , acc_mean, "-", lw=2, label='Anomaly Correlation Coefficient (ACC) value')
     
     
     # Compute the standard error of the mean (sem) at each time point
-    sem_vals = sem(acc_numpy_arr, axis=0)
+    # sem_vals = sem(acc_numpy_arr, axis=0)
     
     # Plot the 95% confidence interval for the mean values
-    plt.fill_between(range(0, total_hours, default_timedelta), acc_mean - 1.96*sem_vals, acc_mean + 1.96*sem_vals, alpha=0.2, label='95% CI')
+    # plt.fill_between(range(0, total_hours, default_timedelta), acc_mean - 1.96*sem_vals, acc_mean + 1.96*sem_vals, alpha=0.2, label='95% CI')
       
     # ax.fill_between(  acc_mean, mu1+sigma1, mu1-sigma1, alpha=0.2)
     
@@ -268,10 +277,11 @@ def plot_time_series(arr, filepath, fld="z500", default_timedelta=6, start_year=
 
 
 # removing warmup steps: 
-acc_numpy_arr = acc_numpy_arr[:, 7:]
+# acc_numpy_arr = acc_numpy_arr[:, 7:]
 
-logging.warning(f" >> ACC_numpy_arr shape:  {acc_numpy_arr} ")
-plt_acc(acc_numpy_arr)
+# plt_acc(acc_numpy_arr)
+
+
 #plot_time_series(acc_numpy_arr, os.path.join( "/scratch/gilbreth/gupt1075/fcnv2/output/" , f"plot_acc_var_z500_with_nics_{simulation_length}"), fld="z500", default_timedelta=6, start_year=2020)
 
 
