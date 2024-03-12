@@ -97,14 +97,14 @@ if not os.path.exists(cds_api):
 
 
 config = {
-    "ensemble_members": 1,
+    "ensemble_members": 2,
     "noise_amplitude": 0.05,
-    "simulation_length": 50,
+    "simulation_length": 150,
     "n_initial_conditions" : 5,
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-02-07 00:00:00",
+            "start_time": "2020-02-08 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [

@@ -17,7 +17,7 @@
 import argparse
 import json
 import logging
-import os, re
+import os, re, gc
 import sys
 from datetime import datetime, timedelta
 from typing import Any, Optional
@@ -81,8 +81,11 @@ def find_index(ch):
         return CHANNELS.index(ch)
     except ValueError:
         print("Channel not found.")
-
-
+        
+        
+        
+        
+    
 def run_ensembles(
     *,
     n_steps: int,
@@ -107,6 +110,7 @@ def run_ensembles(
         output_grid = model.grid
 
     regridder = regrid.get_regridder(model.grid, output_grid).to(model.device)
+
     diagnostics = initialize_netcdf(nc, domains, output_grid, n_ensemble, model.device)
     initial_time = date_obj
     time_units = initial_time.strftime("hours since %Y-%m-%d %H:%M:%S")
@@ -134,8 +138,6 @@ def run_ensembles(
         #         time=time,
         #     )
 
-        logger.info(f">> IN RUN_ENSEMBLES input : {x_start.shape}")
-                
         iterator = model(initial_time, x_start)
 
         # Check if stdout is connected to a terminal
@@ -145,7 +147,7 @@ def run_ensembles(
         time_count = -1
 
         # for time, data, restart in iterator:
-        output_tensor_list = []
+
         for k, (time, data, _) in enumerate(iterator):
             # if restart_frequency and k % restart_frequency == 0:
             #     save_restart(
@@ -158,9 +160,7 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
-                data = data.squeeze(0,1)
-                logger.info(f"Saving data at step {k} of {n_steps} with data : {data.shape}")
-                # as data seems to be required to be 4 dimension, removing first 2 dimnesions (which are 1,1)
+                logger.debug(f"Saving data at step {k} of {n_steps}.")
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
                 update_netcdf(
                     regridder(data),
@@ -182,29 +182,15 @@ def run_ensembles(
         #         batch_id,
         #         path=os.path.join(output_path, "restart", "end"),
         #     )
-    return torch.cat(output_tensor, dim=0)
-
-    # if restart_frequency is not None:
-    #     save_restart(
-    #         restart,
-    #         rank,
-    #         batch_id,
-    #         path=os.path.join(output_path, "restart", "end"),
-    #     )
 
 
 def main(config=None, nc_file_path=None):
-    logging.warning(
-        f" Inside inference_ensemble and using standard args with weather_model config: {config} "
-    )
+    logging.basicConfig(level=logging.INFO)
 
     if config is None:
         parser = argparse.ArgumentParser()
         parser.add_argument("config")
-        parser.add_argument(
-            "--weather_model",
-            default=None,
-        )
+        parser.add_argument("--weather_model", default=None)
         args = parser.parse_args()
         config = args.config
 
@@ -224,28 +210,10 @@ def main(config=None, nc_file_path=None):
     #     config.weather_model = args.weather_model
 
     # Set up parallel
-
-    
-    
-    
-    logging.warning(
-        f" Inside inference_ensemble insitialuzed distributed manager setting parallel trainig with config {config} "
-    )
-    # DistributedManager.initialize()
-    # device = DistributedManager().device
-
-    # Check if GPU is available
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-    
-    # logging.warning(f" device {device}")
-    
+    DistributedManager.initialize()
+    device = DistributedManager().device
     group = torch.distributed.group.WORLD
 
-    # logging.warning(f" device {device} group {group}")
-    
 
     logging.info(f"Earth-2 MIP config loaded {config}")
     logging.info(f"Loading model onto device {device}")
@@ -258,6 +226,7 @@ def main(config=None, nc_file_path=None):
     logging.info("Running inference")
     original_xr = run_inference(model, config, perturb, group, nc_file_path=nc_file_path)
     return original_xr
+
 
 def get_initializer(
     model,
@@ -283,7 +252,8 @@ def get_initializer(
                 sigma=config.grf_noise_sigma,
                 alpha=config.grf_noise_alpha,
                 tau=config.grf_noise_tau,
-            ).to(device)
+                device=device,
+            )
         elif config.perturbation_strategy == PerturbationStrategy.bred_vector:
             noise = generate_bred_vector(
                 x,
@@ -306,7 +276,7 @@ def get_initializer(
         scale = torch.tensor(scale, device=x.device)
 
         if config.perturbation_channels is None:
-            x += noise * scale[:, None, None]
+            return x + noise * scale[:, None, None]
         else:
             channel_list = model.in_channel_names
             indices = torch.tensor(
@@ -330,13 +300,9 @@ def run_basic_inference(
     data_source: Any,
     time: datetime,
 ):
-    
-    x = initial_conditions.get_initial_condition_for_model(model, data_source, time)
-
     """Run a basic inference"""
-    logging.warning(
-        f" BASIC inference_ensemble using a basic inference model: {model}, data_source: {data_source}  time: {time} with initial_conditions {x.shape} "
-    )
+
+    x = initial_conditions.get_initial_condition_for_model(model, data_source, time)
 
     arrays = []
     times = []
@@ -350,65 +316,9 @@ def run_basic_inference(
     coords = dict(lat=model.grid.lat, lon=model.grid.lon)
     coords["channel"] = model.out_channel_names
     coords["time"] = times
-    
-    logging.warning(f" ran inference for model for times: {times} and for channels {model.out_channel_names} with stacked np_arrays output {stacked.shape}")
-    
     return xarray.DataArray(
         stacked, dims=["time", "history", "channel", "lat", "lon"], coords=coords
     )
-
-
-
-
-def datetime_to_netcdf_time(start_time, base_time):
-    base_time = datetime.strptime(base_time, "%Y-%m-%d %H:%M:%S.%f")
-    diff = start_time - base_time
-    return diff.total_seconds() / 3600 # Convert to hours
-    
-
-
-
-def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6), chunk_size=1000):
-    # Open the NetCDF file
-    with DS(file_path) as nc_file:
-        # Get the time variable
-        time_var = nc_file.variables['time']
-        time_list = time_var[:].tolist()
-        # Convert the time list to a list of datetime objects
-        time_list = [datetime(1900, 1, 1) + timedelta(hours=t) for t in time_list]
-        
-        logging.warning(f" time_var {time_var.shape} time_list {len(time_list)}  ")
-        # Find the index of the start time
-        
-        start_index = min(range(len(time_list)), key=lambda i: abs(time_list[i] - start_time))
-        # Calculate the end index
-        end_index = min(start_index + k, len(time_list))
-        logging.warning(f"  {start_index}   {end_index} ")
-        
-        # Calculate the number of chunks needed
-        num_chunks = int(math.ceil((end_index - start_index) / chunk_size))
-        # Initialize empty lists to store the time and variable data
-        time_data = []
-        var_data = []
-        # Loop through the chunks
-        
-        for i in range(num_chunks):
-            # Calculate the indices for the current chunk
-            chunk_start = start_index + i * chunk_size
-            chunk_end = min(start_index + (i + 1) * chunk_size, end_index)
-            # Slice the time and variable data for the current chunk
-            time_chunk = time_var[chunk_start:chunk_end]
-            var_chunk = nc_file.variables['z'][chunk_start:chunk_end]
-            # Append the chunk data to the lists
-            time_data.append(time_chunk)
-            var_data.append(var_chunk)
-        # Concatenate the chunk data into arrays
-        time_data = np.asarray(time_data, dtype=np.float32)
-        var_data = np.asarray(var_data, dtype=np.float32)
-        logging.warning(f" time_data {time_data.shape}  var_data {var_data.shape}")
-        # Return the sliced time and variable data
-        return time_data, var_data
-
 
 
 def run_inference(
@@ -437,52 +347,38 @@ def run_inference(
 
     weather_event = config.get_weather_event()
 
-
     if not data_source:
-        logging.warning(f">> inside data source model.in_channel_names: {model.in_channel_names} ")
         data_source = initial_conditions.get_data_source(
             model.in_channel_names,
             initial_condition_source=weather_event.properties.initial_condition_source,
             netcdf=weather_event.properties.netcdf,
         )
-        logging.warning(f" >> data_source_cds: {type(data_source)}")
 
     date_obj = weather_event.properties.start_time
-
-
-
-
-
+    
     file_name_start = datetime(2020, 1, 1, 0, 0, 0)
     file_name_end = datetime(2023, 9, 1, 23, 59, 59)
-    username = "gupt1075"
-    tmp_path =  f"/scratch/gilbreth/{username}/fcnv2/cds_files_batch/"
-    original_dir_path = f"{tmp_path}" + f"NETCDF_{file_name_start.strftime('%Y-%m-%d')}_to_{file_name_end.strftime('%Y-%m-%d')}_" + "ERA5-pl-z500.25.nc" 
+    
 
+    start_time = datetime(2020, 1, 1, 0, 0, 0)
+    end_time = datetime(2023, 9, 1, 23, 59, 59)
+    # date_obj = f"{start_time.strftime('%Y-%m-%d')}/to/{end_time.strftime('%Y-%m-%d')}", 
+    
+    x = initial_conditions.get_initial_condition_for_model(model, data_source, date_obj)
 
-
-
-
-    logging.warning(f" date_obj = {date_obj} ")
-    # n_initial_conditions = config.n_initial_conditions
-    # num_steps_frames= number_of_frames  + 5
-    time_slice, original_np_array= index_netcdf_in_chunks(original_dir_path , date_obj, config.n_initial_conditions + config.simulation_length )
+    logging.warning(f" >> input_frames x.shape  {x.shape} ")
     
     
     
-    # Open the NetCDF4 file
-    # nc_file = netCDF4.Dataset( original_dir_path , 'r')
-    # x_shape torch.Size([1, 1, 73, 721, 1440]) 
-    # Get the dimensions of the data variable
-    logging.warning(f" >> MOST IMPORTANT original_np_array {original_np_array.shape} ")
-    input_frames =  torch.from_numpy(original_np_array).transpose(1, 0).to(model.device)
-
-
+    
+    
+    
+    
     dist = DistributedManager()
     n_ensemble_global = config.ensemble_members
     n_ensemble = n_ensemble_global // dist.world_size
     if n_ensemble == 0:
-        logging.warning("World size is larger than global number of ensembles.")
+        logger.warning("World size is larger than global number of ensembles.")
         n_ensemble = n_ensemble_global
 
     # Set random seed
@@ -512,127 +408,44 @@ def run_inference(
             f.write(config.json())
 
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
-    acc_list = [ [] for _ in range(config.n_initial_conditions) ]
+    output_file_path = os.path.join(output_path, f"{nc_file_path}/default_ensemble_out_{group_rank}.nc")
 
+    with DS(output_file_path, "w", format="NETCDF4") as nc:
+        # assign global attributes
+        nc.model = config.weather_model
+        nc.config = config.json()
+        nc.weather_event = weather_event.json()
+        nc.date_created = datetime.now().isoformat()
+        nc.history = " ".join(sys.argv)
+        nc.institution = "NVIDIA"
+        nc.Conventions = "CF-1.10"
 
-
-    import gc  # Import the garbage collection module
-    output_tensor_list = []
-    logging.warning(f" >> INPUT_FRAMES: {input_frames.shape}  ")
-    # input_frames[:config.n_initial_conditions]
-    for idx in range(config.n_initial_conditions):
-        output_file_path = os.path.join(output_path, f"Frames_{config.simulation_length}_frames" + nc_file_path)
-        with DS(output_file_path, "w", format="NETCDF4") as nc:
-            # Previous code for NETCDF file writing is preserved here
-            nc.model = config.weather_model
-            nc.config = config.json()
-            nc.weather_event = weather_event.json()
-            nc.date_created = datetime.now().isoformat()
-            nc.history = " ".join(sys.argv)
-            nc.institution = "Purdue"
-            nc.Conventions = "CF-1.10"
-
-            # Ensure the tensor is immediately converted and no GPU memory is hogged
-            output_tensor_cpu = run_ensembles(
-                weather_event=weather_event,
-                model=model,
-                perturb=perturb,
-                nc=nc,
-                domains=weather_event.domains,
-                x=input_frames[idx].unsqueeze(0),
-                n_ensemble=n_ensemble,
-                n_steps=config.simulation_length,
-                output_frequency=config.output_frequency,
-                batch_size=config.ensemble_batch_size,
-                rank=dist.rank,
-                date_obj=date_obj,
-                restart_frequency=config.restart_frequency,
-                output_path=output_path,
-                output_grid=(
-                    earth2mip.grid.from_enum(config.output_grid)
-                    if config.output_grid
-                    else None
-                ),
-                progress=progress,
-            ).detach().cpu()
-            
-            output_tensor_list.append(output_tensor_cpu.numpy())  # Store as numpy array directly
-
-            # Optional: Clear output_tensor and any other large variables from GPU memory explicitly
-            del output_tensor_cpu  # Deletes the reference to free up memory
-            gc.collect()  # Explicitly calls garbage collection (might be useful in tight loops)
-
-    # The rest of your code for barrier, logging, and return statement remains unchanged
-
+        run_ensembles(
+            weather_event=weather_event,
+            model=model,
+            perturb=perturb,
+            nc=nc,
+            domains=weather_event.domains,
+            x=x,
+            n_ensemble=n_ensemble,
+            n_steps=config.simulation_length,
+            output_frequency=config.output_frequency,
+            batch_size=config.ensemble_batch_size,
+            rank=dist.rank,
+            date_obj=date_obj,
+            restart_frequency=config.restart_frequency,
+            output_path=output_path,
+            output_grid=(
+                earth2mip.grid.from_enum(config.output_grid)
+                if config.output_grid
+                else None
+            ),
+            progress=progress,
+        )
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
-    logging.info(f" saved numpy file shape {output_tensor_list[0].shape} Ensemble forecast finished, saved to: {output_file_path} with list of output_tensor {len(output_tensor_list), }")
-    return np.stack(output_tensor_list, axis=0)  # Use np.stack since the tensors are already in CPU at this point
-
-
-
-    # output_tensor_list = []
-    # logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  ")
-    # for idx, frame in enumerate(input_frames[:config.n_initial_conditions]):
-    #     output_file_path = os.path.join( output_path, f"Frames_{config.simulation_length}_frames" + nc_file_path)
-    #     # logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
-    #     with DS(output_file_path, "w", format="NETCDF4") as nc:
-    #         # assign global attributes
-    #         nc.model = config.weather_model
-    #         nc.config = config.json()
-    #         nc.weather_event = weather_event.json()
-    #         nc.date_created = datetime.now().isoformat()
-    #         nc.history = " ".join(sys.argv)
-    #         nc.institution = "Purdue"
-    #         nc.Conventions = "CF-1.10"
-
-    #         output_tensor = run_ensembles(
-    #             weather_event=weather_event,
-    #             model=model,
-    #             perturb=perturb,
-    #             nc=nc,
-    #             domains=weather_event.domains,
-    #             x=input_frames[idx:idx+1,].unsqueeze(0),
-    #             n_ensemble=n_ensemble,
-    #             n_steps=config.simulation_length,
-    #             output_frequency=config.output_frequency,
-    #             batch_size=config.ensemble_batch_size,
-    #             rank=dist.rank,
-    #             date_obj=date_obj,
-    #             restart_frequency=config.restart_frequency,
-    #             output_path=output_path,
-    #             output_grid=(
-    #                 earth2mip.grid.from_enum(config.output_grid)
-    #                 if config.output_grid
-    #                 else None
-    #             ),
-    #             progress=progress,
-    #         )
-    #     # output_tensor_list.append(output_tensor)
-    #     # predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
-    #     # original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
-    #     # # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-    #     # logging.warning(f" >> VERY IMPORTANT after ensemble  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
-    #     # # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
-        
-    #     # # predicted_tensor = predicted_tensor.transpose(0,1)[0]
-    #     # for ridx in  range(predicted_tensor.shape[0]):
-    #     #     # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-    #     #     tmp_original_data = np.expand_dims(original_tensor[ridx,0], axis=0)
-    #     #     tmp_pred_data = np.expand_dims(predicted_tensor[ridx,0], axis=0)
-    #     #     # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
-    #     #     acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
-        
-    # # acc_numpy_array = np.asarray(acc_list)
-    # # logging.warning(f" acc_values {acc_numpy_array.shape}") 
-        
-    # if torch.distributed.is_initialized():
-    #     torch.distributed.barrier(group)
-
-    # logging.info(f" saved numpy file shape {output_tensor_list[0].shape} Ensemble forecast finished, saved to: {output_file_path} with list of output_tensor {len(output_tensor_list), }")
-    # return torch.stack(output_tensor_list, dim=0).detach().cpu().numpy()
-
+    logger.info(f"Ensemble forecast finished, saved to: {output_file_path}")
 
 
 if __name__ == "__main__":

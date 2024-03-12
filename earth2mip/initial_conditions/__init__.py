@@ -14,6 +14,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import datetime, timedelta
+import argparse
+import json
+import logging
+import os, re, gc
+import sys
+from datetime import datetime, timedelta
+from typing import Any, Optional
+import pandas as pd
+
+from torchinfo import summary
+import cftime
+import numpy as np
+import torch
+torch.cuda.empty_cache()
+
 import datetime
 from typing import List
 import logging
@@ -108,8 +124,15 @@ def get_initial_condition_for_model(
 ) -> torch.Tensor:
     
     
-    # logging.warning(f">> get_initial_donidtions_from_source time {time}  time_loop stuff {time_loop.in_channel_names, time_loop.grid, time_loop.n_history_levels, time_loop.history_time_step, time_loop.device, time_loop.dtype} ")
     
+    logging.warning(f" > get_initial_donidtions_from_source  {time}  \n  time_loop channel {time_loop.in_channel_names}") 
+    logging.warning(f" >>>>>>>> time_loop.n_history_levels:  {type(time_loop.n_history_levels)}  {time_loop.n_history_levels} \n history_time_step  {time_loop.history_time_step}" )                    
+
+    # # time_loop.device, time_loop.dtype} ")
+    # time_loop.n_history_levels = 5
+    # time_loop.history_time_step = timedelta(hours=6)
+    # logging.warning(f" After modifying ")
+    # logging.warning(f" >>>>>>>> time_loop.n_history_levels:  {type(time_loop.n_history_levels)}  {time_loop.n_history_levels} \n history_time_step  {time_loop.history_time_step}" )                    
     
     outputt = get_data_from_source(
         data_source,
@@ -121,5 +144,6 @@ def get_initial_condition_for_model(
         time_loop.device,
         time_loop.dtype,
     )
+    logging.warning(f" outputt.shape: {outputt.shape} ")
 
     return outputt

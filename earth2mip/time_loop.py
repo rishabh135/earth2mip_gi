@@ -36,8 +36,8 @@ class GeoTensorInfo:
 
     channel_names: List[ChannelNameT]
     grid: earth2mip.grid.LatLonGrid
-    n_history_levels: int = 1
-    history_time_step: datetime.timedelta = datetime.timedelta(hours=0)
+    n_history_levels: int = 5
+    history_time_step: datetime.timedelta = datetime.timedelta(hours=6)
 
 
 class TimeLoop(Protocol):
@@ -65,8 +65,8 @@ class TimeLoop(Protocol):
     in_channel_names: List[ChannelNameT]
     out_channel_names: List[ChannelNameT]
     grid: earth2mip.grid.LatLonGrid
-    n_history_levels: int = 1
-    history_time_step: datetime.timedelta = datetime.timedelta(hours=0)
+    n_history_levels: int = 5
+    history_time_step: datetime.timedelta = datetime.timedelta(hours=6)
     time_step: datetime.timedelta
     device: torch.device
     dtype: torch.dtype = torch.float32

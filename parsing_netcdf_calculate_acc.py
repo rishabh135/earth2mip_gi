@@ -129,14 +129,32 @@ simulation_length = 187
 # num_steps_frames= number_of_frames  + 5
 time_slice, original_np_array= index_netcdf_in_chunks(original_dir_path , start_time, n_initial_conditions+ simulation_length  )
     
-    
 
+logging.warning(f" original_nunmpy {original_np_array.shape}  {time_slice.shape}")   
+
+def read_netcdf(file_path, ):
+    # Step 2: Read the NetCDF file
+    # ds = xarray.open_dataset(file_path)
+    with DS(file_path) as ds:
+        # Get the time variable
+        # var_chunk = nc_file.variables['z'][chunk_start:chunk_end]
+        tmpdata = ds.variables['time']
+        logging.warning(f" >>>>  {ds.variables} \n >>>>>  {tmpdata.shape}   >> {tmpdata[0]} ")
+        for var_name in ds.data_vars:
+            logging.info(f" var_name {var_name}")
+            tmpdata = ds[var_name].values
+    
+    return tmpdata
+    # Step 4: Save the data as a NumPy file
+    # np.save(output_file_path, data)
 
 
 
 def output_netcdf(file_path, start_time,  delta_t=timedelta(hours=6), chunk_size=1000):
     with DS(file_path) as nc_file:
         # Get the time variable
+
+        
         time_var = nc_file.variables['time']
         time_list = time_var[:].tolist()
         # # Convert the time list to a list of datetime objects
@@ -180,8 +198,10 @@ def output_netcdf(file_path, start_time,  delta_t=timedelta(hours=6), chunk_size
 
 nc_files_predicted = f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/proposal"
 
-for file in sorted(glob.glob(f'{nc_files_predicted}/*.nc'), key=os.path.getsize):
-    predicted_numpy = output_netcdf(file, start_time, delta_t=timedelta(hours=6), chunk_size=1000)
+output_files = read_netcdf( f"{nc_files_predicted}/Frames_187_framesvar_z500_starting_at_04_January_2020.nc")
+logging.warning(f"  out_shape {output_files.shape} ")
+# for file in sorted(glob.glob(f'{nc_files_predicted}/*.nc'), key=os.path.getsize):
+# predicted_numpy = output_netcdf(file, start_time, delta_t=timedelta(hours=6), chunk_size=1000)
     
     
     
