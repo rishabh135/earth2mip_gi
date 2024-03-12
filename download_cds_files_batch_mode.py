@@ -10,13 +10,13 @@ c = cdsapi.Client()
 #  
 start_time = datetime(2020, 1, 1, 0, 0, 0)
 end_time = datetime(2023, 9, 1, 23, 59, 59)
-timedelta = timedelta(hours=6)
-current_time = start_time
+# timedelta = timedelta(hours=6)
+# current_time = start_time
 
-timestamps = []
-while(current_time <= end_time):
-    timestamps.append(current_time)
-    current_time += timedelta
+# timestamps = []
+# while(current_time <= end_time):
+#     timestamps.append(current_time)
+#     current_time += timedelta
     
 
 # Create an empty list to store
@@ -58,20 +58,21 @@ CHANNEL_TO_CODE = {
  
  
 
-
 c.retrieve('reanalysis-era5-complete', {
     # Removed obsolete comments and streamlined the explanation
-    'date'    :  f"{start_time.strftime('%Y-%m-%d')}/to/{end_time.strftime('%Y-%m-%d')}",  # Specify the range of dates to download    
-    'levelist': '1/10/100/137',              # Levels from top (1) to lowest model level (137)
-    'levtype' : 'ml',                        # Model levels
-    'param'   : '129/130',                   # Parameter codes for geopotential height and temperature
+    'date'    :  f"{start_time.strftime('%Y-%m-%d')}/to/{end_time.strftime('%Y-%m-%d')}",  # Specify the range of dates to download
+    'levelist': '500',              # pressure Levels 
+    'levtype' : 'pl',                        # Model levels
+    'param'   : '137',                       # Parameter code for geopotential
     'stream'  : 'oper',                      # Operational data stream
     'time'    : '00/06/12/18',               # Times of day (in shorthand notation)
     'type'    : 'an',                        # Analysis type
-	'area'    : 'global',              		 # Geographical subarea: North/West/South/East
-	'grid'    : '0.25/0.25'
+    'area'    : 'global',              # Geographical subarea: North/West/South/East
+    'grid'    : '0.25/0.25',                   # Grid resolution: latitude/longitude
     'format'  : 'netcdf',                    # Output format, requires 'grid' to be specified
-}, f"{output_path}" + f"NETCDF_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5_73_channels.25.nc")   
+}, f"{output_path}" + f"tcwv_{start_time.strftime('%Y-%m-%d')}_to_{end_time.strftime('%Y-%m-%d')}_" + "ERA5-pl-tcwv.25.nc")        # Output filename
+
+
 
 
 # module load netcdf
