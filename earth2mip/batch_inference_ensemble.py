@@ -134,6 +134,8 @@ def run_ensembles(
         #         time=time,
         #     )
 
+        logger.info(f">> IN RUN_ENSEMBLES input : {x_start.shape}")
+                
         iterator = model(initial_time, x_start)
 
         # Check if stdout is connected to a terminal
@@ -156,7 +158,9 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
-                logger.debug(f"Saving data at step {k} of {n_steps}.")
+                data = data.squeeze(0,1)
+                logger.info(f"Saving data at step {k} of {n_steps} with data : {data.shape}")
+                # as data seems to be required to be 4 dimension, removing first 2 dimnesions (which are 1,1)
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
                 update_netcdf(
                     regridder(data),

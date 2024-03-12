@@ -34,7 +34,7 @@ from earth2mip import networks
 
 logger = logging.getLogger(__file__)
 
-CHANNELS = ["z500"]
+CHANNELS = ["z500", "u10m"]
 
 # CHANNELS = [
 #     "u10m",
