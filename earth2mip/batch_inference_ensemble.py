@@ -510,13 +510,16 @@ def run_inference(
     group_rank = torch.distributed.get_group_rank(group, dist.rank)
     acc_list = [ [] for _ in range(config.n_initial_conditions) ]
 
+
+
+    import gc  # Import the garbage collection module
     output_tensor_list = []
-    logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  ")
-    for idx, frame in enumerate(input_frames[:config.n_initial_conditions]):
-        output_file_path = os.path.join( output_path, f"Frames_{config.simulation_length}_frames" + nc_file_path)
-        # logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
+    logging.warning(f" >> INPUT_FRAMES: {input_frames.shape}  ")
+    # input_frames[:config.n_initial_conditions]
+    for idx in range(config.n_initial_conditions):
+        output_file_path = os.path.join(output_path, f"Frames_{config.simulation_length}_frames" + nc_file_path)
         with DS(output_file_path, "w", format="NETCDF4") as nc:
-            # assign global attributes
+            # Previous code for NETCDF file writing is preserved here
             nc.model = config.weather_model
             nc.config = config.json()
             nc.weather_event = weather_event.json()
@@ -525,13 +528,14 @@ def run_inference(
             nc.institution = "Purdue"
             nc.Conventions = "CF-1.10"
 
-            output_tensor = run_ensembles(
+            # Ensure the tensor is immediately converted and no GPU memory is hogged
+            output_tensor_cpu = run_ensembles(
                 weather_event=weather_event,
                 model=model,
                 perturb=perturb,
                 nc=nc,
                 domains=weather_event.domains,
-                x=input_frames[idx:idx+1,].unsqueeze(0),
+                x=input_frames[idx].unsqueeze(0),
                 n_ensemble=n_ensemble,
                 n_steps=config.simulation_length,
                 output_frequency=config.output_frequency,
@@ -546,30 +550,86 @@ def run_inference(
                     else None
                 ),
                 progress=progress,
-            )
-        # output_tensor_list.append(output_tensor)
-        # predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
-        # original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
-        # # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-        # logging.warning(f" >> VERY IMPORTANT after ensemble  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
-        # # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
-        
-        # # predicted_tensor = predicted_tensor.transpose(0,1)[0]
-        # for ridx in  range(predicted_tensor.shape[0]):
-        #     # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
-        #     tmp_original_data = np.expand_dims(original_tensor[ridx,0], axis=0)
-        #     tmp_pred_data = np.expand_dims(predicted_tensor[ridx,0], axis=0)
-        #     # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
-        #     acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
-        
-    # acc_numpy_array = np.asarray(acc_list)
-    # logging.warning(f" acc_values {acc_numpy_array.shape}") 
-        
+            ).detach().cpu()
+            
+            output_tensor_list.append(output_tensor_cpu.numpy())  # Store as numpy array directly
+
+            # Optional: Clear output_tensor and any other large variables from GPU memory explicitly
+            del output_tensor_cpu  # Deletes the reference to free up memory
+            gc.collect()  # Explicitly calls garbage collection (might be useful in tight loops)
+
+    # The rest of your code for barrier, logging, and return statement remains unchanged
+
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
     logging.info(f" saved numpy file shape {output_tensor_list[0].shape} Ensemble forecast finished, saved to: {output_file_path} with list of output_tensor {len(output_tensor_list), }")
-    return torch.stack(output_tensor_list, dim=0).detach().cpu().numpy()
+    return np.stack(output_tensor_list, axis=0)  # Use np.stack since the tensors are already in CPU at this point
+
+
+
+    # output_tensor_list = []
+    # logging.warning(f" ORIGINAL_ARRAY : {original_np_array.shape}  ")
+    # for idx, frame in enumerate(input_frames[:config.n_initial_conditions]):
+    #     output_file_path = os.path.join( output_path, f"Frames_{config.simulation_length}_frames" + nc_file_path)
+    #     # logging.warning(f"idx {idx}  x {x.shape}    output_file_path {output_file_path} ")
+    #     with DS(output_file_path, "w", format="NETCDF4") as nc:
+    #         # assign global attributes
+    #         nc.model = config.weather_model
+    #         nc.config = config.json()
+    #         nc.weather_event = weather_event.json()
+    #         nc.date_created = datetime.now().isoformat()
+    #         nc.history = " ".join(sys.argv)
+    #         nc.institution = "Purdue"
+    #         nc.Conventions = "CF-1.10"
+
+    #         output_tensor = run_ensembles(
+    #             weather_event=weather_event,
+    #             model=model,
+    #             perturb=perturb,
+    #             nc=nc,
+    #             domains=weather_event.domains,
+    #             x=input_frames[idx:idx+1,].unsqueeze(0),
+    #             n_ensemble=n_ensemble,
+    #             n_steps=config.simulation_length,
+    #             output_frequency=config.output_frequency,
+    #             batch_size=config.ensemble_batch_size,
+    #             rank=dist.rank,
+    #             date_obj=date_obj,
+    #             restart_frequency=config.restart_frequency,
+    #             output_path=output_path,
+    #             output_grid=(
+    #                 earth2mip.grid.from_enum(config.output_grid)
+    #                 if config.output_grid
+    #                 else None
+    #             ),
+    #             progress=progress,
+    #         )
+    #     # output_tensor_list.append(output_tensor)
+    #     # predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
+    #     # original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
+    #     # # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
+    #     # logging.warning(f" >> VERY IMPORTANT after ensemble  predicted_tensor: {predicted_tensor.shape}  >>> original_tensor: {original_tensor.shape} ")
+    #     # # acc_list.append(weighted_acc(predicted_tensor[:,0:1], original_tensor, weighted = True))
+        
+    #     # # predicted_tensor = predicted_tensor.transpose(0,1)[0]
+    #     # for ridx in  range(predicted_tensor.shape[0]):
+    #     #     # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
+    #     #     tmp_original_data = np.expand_dims(original_tensor[ridx,0], axis=0)
+    #     #     tmp_pred_data = np.expand_dims(predicted_tensor[ridx,0], axis=0)
+    #     #     # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+    #     #     acc_list[idx].append(weighted_acc(tmp_pred_data, tmp_original_data, weighted = True))
+        
+    # # acc_numpy_array = np.asarray(acc_list)
+    # # logging.warning(f" acc_values {acc_numpy_array.shape}") 
+        
+    # if torch.distributed.is_initialized():
+    #     torch.distributed.barrier(group)
+
+    # logging.info(f" saved numpy file shape {output_tensor_list[0].shape} Ensemble forecast finished, saved to: {output_file_path} with list of output_tensor {len(output_tensor_list), }")
+    # return torch.stack(output_tensor_list, dim=0).detach().cpu().numpy()
+
+
 
 if __name__ == "__main__":
     main()

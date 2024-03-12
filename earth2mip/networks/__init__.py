@@ -178,8 +178,8 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
 
         logger.warning(f" center: {center.shape} scale {scale.shape} channel_names {self.channel_names} ")
         
-        center = torch.from_numpy(np.squeeze(center)).float()
-        scale = torch.from_numpy(np.squeeze(scale)).float()
+        center = torch.from_numpy(center).float()
+        scale = torch.from_numpy(scale).float()
         self.register_buffer("scale_org", scale)
         self.register_buffer("center_org", center)
         # infer channel names
