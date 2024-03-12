@@ -523,7 +523,7 @@ def run_inference(
         # tmp_original_data = np.expand_dims(val, axis=0)
         # tmp_pred_data = np.expand_dims(val2, axis=0)
         # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
-        acc_list.append(weighted_acc(predicted_tensor[ridx], output_frames[ridx], weighted = True))
+        acc_list.append(weighted_acc(predicted_tensor[ridx, 41], output_frames[ridx, 41], weighted = True))
     
     acc_numpy_arr = np.asarray(acc_list)    
     logging.warning(f" acc_values {acc_numpy_arr} {acc_numpy_arr.shape}") 
