@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES.
+# Paste pre-Pyrfecte# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-FileCopyrightText: All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -176,11 +176,12 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         self.source = source
         self.normalize = normalize
 
+        logger.warning(f" center: {center.shape} scale {scale.shape} channel_names {self.channel_names} ")
+        
         center = torch.from_numpy(np.squeeze(center)).float()
         scale = torch.from_numpy(np.squeeze(scale)).float()
         self.register_buffer("scale_org", scale)
         self.register_buffer("center_org", center)
-
         # infer channel names
         self.in_channel_names = self.out_channel_names = channel_names
         self.channels = list(range(len(channel_names)))
@@ -223,60 +224,44 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
         else:
             yield from self._iterate(x=x, time=time)
 
+
     def _iterate(self, x, normalize=True, time=None):
-        """Yield (time, unnormalized data, restart) tuples
+            """Yield (time, unnormalized data, restart) tuples
 
-        restart = (time, unnormalized data)
-        """
-        if self.time_dependent and not time:
-            raise ValueError("Time dependent models require ``time``.")
-        time = time or datetime.datetime(1900, 1, 1)
-        
-        with torch.no_grad():
-            # drop all but the last time point
-            # remove channels
+            restart = (time, unnormalized data)
+            """
+            if self.time_dependent and not time:
+                raise ValueError("Time dependent models require ``time``.")
+            time = time or datetime.datetime(1900, 1, 1)
+            with torch.no_grad():
+                # drop all but the last time point
+                # remove channels
 
-            _, n_time_levels, n_channels, _, _ = x.shape
-            # logger.warning(f" __init__.py normalize {normalize} iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
-            assert n_time_levels == self.n_history + 1  # noqa
+                _, n_time_levels, n_channels, _, _ = x.shape
+                assert n_time_levels == self.n_history + 1  # noqa
 
-            if (self.normalize):
-                x = (x - self.center) / self.scale
+                if normalize:
+                    x = (x - self.center) / self.scale
 
-            # logger.warning(f" ####### after normalize  input_shape: {x.shape} time: {time}  ")
-            
-
-            # yield initial time for convenience
-            restart = dict(x=x, normalize=False, time=time)
-            yield time, self.scale * x[:, -1] + self.center, restart
-
-            # logger.warning(f" ####### True  input_shape: {x.shape} time: {time}  scale: {self.scale.shape} self.center {self.center.shape} ")
-            
-            while True:
-                if self.source:
-                    #  unnormalizing the output
-                    x_with_units = x * self.scale + self.center
-                    dt = torch.tensor(self.time_step.total_seconds())
-                    x += self.source(x_with_units, time) / self.scale * dt
-                    
-                # x shape
-                
-                unique_axis_2 = len(torch.unique(x.squeeze(), dim=0)) == 1
-                # Check if the tensor is repeated along axis 0
-                # logger.warning(f" ####### STEP_before_model {x.shape}  unique_axis_2: {unique_axis_2}  -----> self.center.shape {self.center.shape}  ---->  self.scale.shape {self.scale.shape}  ")
-               
-                x = self.model(x, time)
-                time = time + self.time_step
-
-                # create args and kwargs for future use
+                # yield initial time for convenience
                 restart = dict(x=x, normalize=False, time=time)
-                out = self.scale * x[:, -1] + self.center
-                # logger.warning(f" /earth2mip/earth2mip/networks/__init__.py   Autoregressive step, x: {x.shape}  time: {time} out: {out.shape}")
-                
-                yield time, out, restart
+                yield time, self.scale * x[:, -1] + self.center, restart
+
+                while True:
+                    if self.source:
+                        x_with_units = x * self.scale + self.center
+                        dt = torch.tensor(self.time_step.total_seconds())
+                        x += self.source(x_with_units, time) / self.scale * dt
+                    x = self.model(x, time)
+                    time = time + self.time_step
+
+                    # create args and kwargs for future use
+                    restart = dict(x=x, normalize=False, time=time)
+                    out = self.scale * x[:, -1] + self.center
+                    yield time, out, restart
 
 
-def _default_inference(package, metadata: schema.Model, device, normalize):
+def _default_inference(package, metadata: schema.Model, device):
     if metadata.architecture == "pickle":
         loader = loaders.pickle
     elif metadata.architecture_entrypoint:
@@ -300,10 +285,10 @@ def _default_inference(package, metadata: schema.Model, device, normalize):
         grid=earth2mip.grid.from_enum(metadata.grid),
         n_history=metadata.n_history,
         time_step=metadata.time_step,
-        normalize=normalize,
     )
     inference.to(device)
     return inference
+
 
 
 def _load_package_builtin(package, device, name) -> time_loop.TimeLoop:
@@ -410,3 +395,5 @@ def persistence(package, pretrained=True):
         grid=grid,
         n_history=0,
     )
+
+

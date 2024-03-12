@@ -107,33 +107,25 @@ def run_ensembles(
         output_grid = model.grid
 
     regridder = regrid.get_regridder(model.grid, output_grid).to(model.device)
-
     diagnostics = initialize_netcdf(nc, domains, output_grid, n_ensemble, model.device)
     initial_time = date_obj
     time_units = initial_time.strftime("hours since %Y-%m-%d %H:%M:%S")
     nc["time"].units = time_units
     nc["time"].calendar = "standard"
-    logging.warning(f"  time_units {time_units}  n_ensembles {n_ensemble}, batch_size {batch_size} ")
+
     for batch_id in range(0, n_ensemble, batch_size):
-        logging.info(
-            f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}"
-        )
+        logger.info(f"ensemble members {batch_id+1}-{batch_id+batch_size}/{n_ensemble}")
         batch_size = min(batch_size, n_ensemble - batch_id)
 
-
         x = x.repeat(batch_size, 1, 1, 1, 1)
-
-        logging.warning(f" SKIPPING Perturb before perturb x-> {x.shape}   rank:  {rank}  batch_id {batch_id}")
-        # x = perturb(x, rank, batch_id, model.device)
-        
-        
+        x_start = perturb(x, rank, batch_id, model.device)
         # restart_dir = weather_event.properties.restart
 
         # TODO: figure out if needed
         # if restart_dir:
         #     path = get_checkpoint_path(rank, batch_id, restart_dir)
-        #     # TODO use logging
-        #     logging.info(f"Loading from restart from {path}")
+        #     # TODO use logger
+        #     logger.info(f"Loading from restart from {path}")
         #     kwargs = torch.load(path)
         # else:
         #     kwargs = dict(
@@ -142,16 +134,7 @@ def run_ensembles(
         #         time=time,
         #     )
 
-        iterator = model(initial_time, x)
-
-        # logging.warning(f" >> iterator {len(iterator)} iterator_shape: {iterator[0].shape} ")
-    
-        # out_sum = summary(model, input_data=[initial_time, x], dtypes=[datetime, torch.long], mode="train", col_names=['input_size', 'output_size', 'num_params', 'trainable'], row_settings=['var_names'], depth=4)
-        # logging.warning(" >> MODEL_summary: {} \n".format(out_sum))
-
-    
-        logging.warning(f" >> run_ensemble in inference_ensemble running iterator for model for times: {initial_time} and with x {x.shape} \n ")
-    
+        iterator = model(initial_time, x_start)
 
         # Check if stdout is connected to a terminal
         if sys.stderr.isatty() and progress:
@@ -160,11 +143,8 @@ def run_ensembles(
         time_count = -1
 
         # for time, data, restart in iterator:
-        # output_tensor = {}
-        output_tensor = []
+        output_tensor_list = []
         for k, (time, data, _) in enumerate(iterator):
-            output_tensor.append(data)
-            # output_tensor[re.sub(r'\s+', '_',  str(time))] = data
             # if restart_frequency and k % restart_frequency == 0:
             #     save_restart(
             #         restart,
@@ -176,9 +156,8 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
+                logger.debug(f"Saving data at step {k} of {n_steps}.")
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
-                logging.warning(f" >> Saving data at step {k} of {n_steps}  with nc[time][time_count] : {cftime.date2num(time, nc['time'].units)}")
-                
                 update_netcdf(
                     regridder(data),
                     diagnostics,
@@ -192,7 +171,13 @@ def run_ensembles(
             if k == n_steps:
                 break
 
-            
+        # if restart_frequency is not None:
+        #     save_restart(
+        #         restart,
+        #         rank,
+        #         batch_id,
+        #         path=os.path.join(output_path, "restart", "end"),
+        #     )
     return torch.cat(output_tensor, dim=0)
 
     # if restart_frequency is not None:
@@ -562,7 +547,7 @@ def run_inference(
                 ),
                 progress=progress,
             )
-            output_tensor_list.append(output_tensor)
+        # output_tensor_list.append(output_tensor)
         # predicted_tensor = torch.cat(output_tensor).detach().cpu().numpy()
         # original_tensor = np.transpose( original_np_array[:,idx: idx+config.simulation_length+1] , (1,0,2,3))
         # # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 

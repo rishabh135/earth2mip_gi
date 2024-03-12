@@ -99,12 +99,12 @@ if not os.path.exists(cds_api):
 config = {
     "ensemble_members": 1,
     "noise_amplitude": 0.05,
-    "simulation_length": 187,
-    "n_initial_conditions" : 1,
+    "simulation_length": 50,
+    "n_initial_conditions" : 5,
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-01-05 00:00:00",
+            "start_time": "2020-02-07 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -115,7 +115,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/proposal",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/one_channel",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
