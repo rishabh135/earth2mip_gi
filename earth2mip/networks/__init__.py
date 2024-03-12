@@ -238,10 +238,11 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                 # remove channels
 
                 _, n_time_levels, n_channels, _, _ = x.shape
+                logging.warning(f" __init__.py iterate funciton time with removing normalizing from x : {time}   input_shape: {x.shape}  time_levels: {n_time_levels}  n_channels: { n_channels} ")
                 assert n_time_levels == self.n_history + 1  # noqa
 
-                if normalize:
-                    x = (x - self.center) / self.scale
+                # if normalize:
+                #     x = (x - self.center) / self.scale
 
                 # yield initial time for convenience
                 restart = dict(x=x, normalize=False, time=time)
@@ -258,6 +259,7 @@ class Inference(torch.nn.Module, time_loop.TimeLoop):
                     # create args and kwargs for future use
                     restart = dict(x=x, normalize=False, time=time)
                     out = self.scale * x[:, -1] + self.center
+                
                     yield time, out, restart
 
 

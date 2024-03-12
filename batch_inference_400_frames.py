@@ -52,7 +52,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",  # Set the log message format
     datefmt="%m/%d/%Y %H:%M:%S",  # Set the date format for log timestamps
     level=logging.INFO,  # Set the logging level to INFO
-    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/{day_month}_one_channel.log",  # Set the log file path
+    filename=f"/scratch/gilbreth/{username}/fcnv2/logs/{day_month}_saved_ics.log",  # Set the log file path
 )
 
 
@@ -60,7 +60,7 @@ logging.basicConfig(
 dotenv.load_dotenv()
 
 # With the enviroment variables set now we import Earth-2 MIP
-from earth2mip import batch_inference_ensemble, registry
+from earth2mip import batch_inference_ensemble, registry, batch_inf_ensemble_saved_ics
 from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
 
 from earth2mip.weighted_acc_rmse import weighted_acc, weighted_rmse, weighted_rmse_torch, unlog_tp_torch
@@ -97,14 +97,14 @@ if not os.path.exists(cds_api):
 
 
 config = {
-    "ensemble_members": 2,
+    "ensemble_members": 1,
     "noise_amplitude": 0.05,
     "simulation_length": 150,
     "n_initial_conditions" : 5,
     "weather_event": {
         "properties": {
             "name": "Globe",
-            "start_time": "2020-02-08 00:00:00",
+            "start_time": "2020-02-09 00:00:00",
             "initial_condition_source": "cds",
         },
         "domains": [
@@ -115,7 +115,7 @@ config = {
             }
         ],
     },
-    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/one_channel",
+    "output_path": f"/scratch/gilbreth/{username}/fcnv2/output/batch_inference/march_12_proposal",
     "output_frequency": 1,
     "weather_model": "fcnv2_sm",
     "seed": 12345,
@@ -169,7 +169,11 @@ n_initial_conditions = config["n_initial_conditions"]
 
 
 config_str = json.dumps(config)
-acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
+# acc_numpy_arr =  batch_inference_ensemble.main(config_str, nc_file_path)
+
+
+
+acc_numpy_arr =  batch_inf_ensemble_saved_ics.main(config_str, nc_file_path)
 
 
 

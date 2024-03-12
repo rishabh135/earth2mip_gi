@@ -139,7 +139,11 @@ def read_netcdf(file_path, ):
         # Get the time variable
         # var_chunk = nc_file.variables['z'][chunk_start:chunk_end]
         tmpdata = ds.variables['time']
-        logging.warning(f" >>>>  {ds.variables} \n >>>>>  {tmpdata.shape}   >> {tmpdata[0]} ")
+        # Get the dimensions of the data
+        # lat = ds.variables['lat'][:]
+        # lon = ds.variables['lon'][:]
+
+        logging.warning(f" >>>>  {ds.variables.keys()} \n >>>>>  {tmpdata.shape} >> {tmpdata[0]} ")
         for var_name in ds.data_vars:
             logging.info(f" var_name {var_name}")
             tmpdata = ds[var_name].values
