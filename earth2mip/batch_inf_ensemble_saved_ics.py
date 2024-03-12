@@ -517,15 +517,16 @@ def run_inference(
     # = weighted_acc(predicted_tensor, output_frames, weighted = True)
     # np.zeros(config.simulation_length, 1)
     for ridx in  range(predicted_tensor.shape[0]):
+        channel_index = find_index("z500")
         # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
         # val = output_frames[ridx,0]
         # val2 = predicted_tensor[ridx,0]
         # tmp_original_data = np.expand_dims(val, axis=0)
         # tmp_pred_data = np.expand_dims(val2, axis=0)
         # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
-        acc_list.append(weighted_acc(predicted_tensor[ridx, 41], output_frames[ridx, 41], weighted = True))
+        acc_list.append(weighted_acc(predicted_tensor[ridx, channel_index ], output_frames[ridx, channel_index], weighted = True))
     
-    acc_numpy_arr = np.asarray(acc_list)    
+    acc_numpy_arr = np.stack(acc_list, axis=0)    
     logging.warning(f" acc_values {acc_numpy_arr} {acc_numpy_arr.shape}") 
     return acc_numpy_arr
 
