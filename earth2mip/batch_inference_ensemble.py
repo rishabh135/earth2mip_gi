@@ -356,12 +356,6 @@ def run_inference(
 
     date_obj = weather_event.properties.start_time
     
-    file_name_start = datetime(2020, 1, 1, 0, 0, 0)
-    file_name_end = datetime(2023, 9, 1, 23, 59, 59)
-    
-
-    start_time = datetime(2020, 1, 1, 0, 0, 0)
-    end_time = datetime(2023, 9, 1, 23, 59, 59)
     # date_obj = f"{start_time.strftime('%Y-%m-%d')}/to/{end_time.strftime('%Y-%m-%d')}", 
     
     x = initial_conditions.get_initial_condition_for_model(model, data_source, date_obj)

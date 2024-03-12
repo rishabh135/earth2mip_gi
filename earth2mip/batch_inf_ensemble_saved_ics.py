@@ -121,7 +121,7 @@ def index_netcdf_in_chunks(file_path, start_time, k, delta_t=timedelta(hours=6),
             var_data.append(var_chunk)
         # Concatenate the chunk data into arrays
         time_data = np.asarray(time_data, dtype=np.float32)
-        var_data = torch.from_numpy(np.asarray(var_data, dtype=np.float32))
+        var_data = np.asarray(var_data, dtype=np.float32)
         logging.warning(f" time_data {time_data.shape}  var_data {var_data.shape}")
         # Return the sliced time and variable data
         return time_data, var_data
@@ -220,7 +220,8 @@ def run_ensembles(
 
             if k == n_steps:
                 break
-
+        
+        logger.warning(f" >> Before output_data is stacked {len(output_tensor_list)}  length_inside_list[0]   {len(output_tensor_list[0])}   seeing the individual numpy tensor {output_tensor_list[0][0].shape}  ")
         return np.stack(output_tensor_list[0], axis=0)
         # if restart_frequency is not None:
         #     save_restart(
@@ -419,7 +420,7 @@ def run_inference(
     # num_steps_frames= number_of_frames  + 5 + config.simulation_length
     time_slice, input_frames= index_netcdf_in_chunks(original_dir_path , date_obj,1)
     
-    x = input_frames.repeat(1, 1, 73, 1, 1).to(model.device)
+    x = torch.from_numpy(input_frames).repeat(1, 1, 73, 1, 1).to(model.device)
     
     logging.warning(f" >> MOST IMPORTANT :  initial_conditions must be [1, 1, 73, 721, 1440]  what actuall is: >>   x.shape  {x.shape} {x.device} {type(x)} ")
     
@@ -475,7 +476,7 @@ def run_inference(
         nc.institution = "NVIDIA"
         nc.Conventions = "CF-1.10"
 
-        output_tensor = run_ensembles(
+        predicted_tensor = run_ensembles(
             weather_event=weather_event,
             model=model,
             perturb=perturb,
@@ -500,7 +501,35 @@ def run_inference(
     if torch.distributed.is_initialized():
         torch.distributed.barrier(group)
 
-    logger.info(f"Ensemble output {output_tensor.shape} ")
+    predicted_tensor = predicted_tensor.squeeze()
+    tmp_data_obj = weather_event.properties.start_time 
+    time_slice, output_frames= index_netcdf_in_chunks(original_dir_path , date_obj, config.simulation_length+1)
+    logger.info(f"Ensemble output {predicted_tensor.shape}  {output_frames.shape}  ")
+
+
+    output_frames = np.transpose( output_frames, (1,0, 2, 3)).repeat(repeats=73, axis=1)
+
+    logger.info(f"predicted_tensor {predicted_tensor.shape}  output_frames:   {output_frames.shape}  ")
+
+
+        
+    acc_list = []
+    # = weighted_acc(predicted_tensor, output_frames, weighted = True)
+    # np.zeros(config.simulation_length, 1)
+    for ridx in  range(predicted_tensor.shape[0]):
+        # predicted_tensor: (6, 73, 721, 1440)  >>> original_tensor: (6, 1, 721, 1440) 
+        # val = output_frames[ridx,0]
+        # val2 = predicted_tensor[ridx,0]
+        # tmp_original_data = np.expand_dims(val, axis=0)
+        # tmp_pred_data = np.expand_dims(val2, axis=0)
+        # logging.warning(f" RIDX : {ridx}  original_data : {tmp_original_data.shape}   predicted_data[idx] : {tmp_pred_data.shape}  ")
+        acc_list.append(weighted_acc(predicted_tensor[ridx], output_frames[ridx], weighted = True))
+    
+    acc_numpy_arr = np.asarray(acc_list)    
+    logging.warning(f" acc_values {acc_numpy_arr} {acc_numpy_arr.shape}") 
+    return acc_numpy_arr
+
+
 
 
 if __name__ == "__main__":
