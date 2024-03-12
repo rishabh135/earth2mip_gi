@@ -205,7 +205,7 @@ def run_ensembles(
             # Saving the output
             if output_frequency and k % output_frequency == 0:
                 time_count += 1
-                logger.info(f">> MOST IMPORTANT output_data Saving data at step {k} of {n_steps} >> data shape {data.shape} ")
+                # logger.info(f">> MOST IMPORTANT output_data Saving data at step {k} of {n_steps} >> data shape {data.shape} ")
                 nc["time"][time_count] = cftime.date2num(time, nc["time"].units)
                 output_tensor_list[batch_id].append(data.detach().cpu().numpy())
                 update_netcdf(
