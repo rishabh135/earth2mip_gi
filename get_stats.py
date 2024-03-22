@@ -8,6 +8,10 @@ import logging
 from datetime import datetime
 
 
+
+
+
+
 # Get the current date and time
 now = datetime.now()
 # Format the date to get the day and month
