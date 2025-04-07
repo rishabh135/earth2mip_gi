@@ -1,233 +1,121 @@
+
+
 import numpy as np
 import datetime
+from datetime import timezone, timedelta
 import os
 import logging
 import argparse
 import time
 import sys
+import _pickle
 import torch
 import xarray as xr
-
-import os
-import sys
-import time
-import argparse
-from datetime import datetime, timedelta
-import importlib.util
-import json
-import logging
-import os, time
-import sys
-import logging
-import datetime
-from datetime import datetime, timedelta
-import cdsapi
-from collections import defaultdict
+from dateutil.relativedelta import relativedelta
 import dotenv
-import xarray as xr
-import numpy as np
-import torch
-import cdsapi
-import pandas as pd
-import zarr
-import argparse
-
-import importlib.util
-import json
-import logging
-import os
-import sys
-import time
-import argparse
-from datetime import datetime, timedelta, timezone
-import matplotlib
-matplotlib.use('Agg')  # Needed for headless environments
-import matplotlib.pyplot as plt
-import dotenv
-import xarray as xr
-import numpy as np
-import torch
-import cdsapi
-import pandas as pd
-
-
-
-import numpy as np
-import xarray as xr
-from datetime import datetime, timedelta
-from earth2studio.data import ARCO
-from earth2studio.models.px.sfno import VARIABLES
-import asyncio
-import logging
-import os
-from typing import List
-from tqdm import tqdm
-
-import numpy as np
-import xarray as xr
-from datetime import datetime, timedelta
-from earth2studio.data import ARCO
-from earth2studio.models.px.sfno import VARIABLES
-import logging
-import os
-from typing import List
-from tqdm import tqdm
-import traceback
-from dateutil.relativedelta import relativedelta # More robust time stepping
-
-
+import pytz
 
 # --- Configuration ---
-# Script paths and environment (adjust as needed)
 USERNAME = "gupt1075"
-BASE_SCRATCH_PATH = f"/scratch/gilbreth/{USERNAME}/fcnv2/ARCO_data_73_channels"
-EARTH2MIP_PATH = "/scratch/gilbreth/gupt1075/fcnv2/earth2mip"
+MODEL_REGISTRY_BASE = f"/scratch/gilbreth/gupt1075/fcnv2/"
+EARTH2MIP_PATH = f"/scratch/gilbreth/gupt1075/fcnv2/earth2mip"
 
+# --- Add earth2mip to Python path ---
+if EARTH2MIP_PATH not in sys.path:
+    sys.path.insert(0, EARTH2MIP_PATH)
+    print(f"Added {EARTH2MIP_PATH} to Python path.")
 
-# --- 1. Environment Setup ---
-# Set number of GPUs to use (adjust if using multi-GPU inference later)
-# For this script focusing on single GPU logic from run_inference, WORLD_SIZE=1 is appropriate.
+# --- Environment Setup ---
 os.environ["WORLD_SIZE"] = "1"
+os.environ["MODEL_REGISTRY"] = MODEL_REGISTRY_BASE
+print(f"Set MODEL_REGISTRY environment variable to: {MODEL_REGISTRY_BASE}")
 
+# --- Logging Setup ---
+def setup_logging(log_dir, log_level=logging.INFO):
+    os.makedirs(log_dir, exist_ok=True)
+    pacific_tz = pytz.timezone("America/Los_Angeles")
+    timestamp_str = datetime.datetime.now(pacific_tz).strftime("%d_%B_%H_%M_")
+    log_filename = os.path.join(log_dir, f"inference_pipeline_{timestamp_str}.log")
 
-# Set model registry as a local folder (modify path if needed)
-# script_dir = os.path.dirname(os.path.realpath(__file__)) if "__file__" in locals() else os.getcwd()
-# model_registry = os.path.join(script_dir, "models")
-# os.makedirs(model_registry, exist_ok=True)
-# os.environ["MODEL_REGISTRY"] = model_registry
-# logger.info(f"MODEL_REGISTRY set to: {model_registry}")
-
-
-# package = registry.get_model("fcnv2")
-
-
-
-
-
-
-
-
-
-
-
-
-# --- Enhanced Logging Setup ---
-def setup_logging(output_dir):
-    """Configures logging to file and console with Pacific Time timestamps"""
-    class PSTFormatter(logging.Formatter):
-        def converter(self, timestamp):
-            return datetime.fromtimestamp(timestamp, tz=timezone(timedelta(hours=-8)))
+    class PytzFormatter(logging.Formatter):
+        def __init__(self, fmt=None, datefmt=None, tz=None):
+            super().__init__(fmt, datefmt)
+            self.tz = tz if tz else pytz.utc
 
         def formatTime(self, record, datefmt=None):
-            dt = self.converter(record.created)
+            dt = datetime.datetime.fromtimestamp(record.created, self.tz)
             if datefmt:
                 return dt.strftime(datefmt)
             else:
-                return dt.isoformat()
+                return dt.strftime("%Y-%m-%d %H:%M:%S.%f %Z%z")
 
-    # Corrected variable name from timestmap to timestamp
-    timestamp = datetime.now(timezone(timedelta(hours=-7))).strftime("%d_%B_%H_%M")
-    
-    log_file = os.path.join(output_dir, f"download_ensemble_pipeline_{str(timestamp)}.log")
+    logger = logging.getLogger("FCNv2Inference")
+    logger.setLevel(log_level)
+    logger.handlers.clear()
 
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-
-    # File handler with detailed logging
-    file_handler = logging.FileHandler(log_file)
-    file_formatter = PSTFormatter(
-        "%(asctime)s [%(levelname)-8s] %(name)-25s - %(message)s",
-        datefmt="%d_%B_%H:%M:"
-    )
+    file_handler = logging.FileHandler(log_filename, mode="w")
+    file_formatter = PytzFormatter("%(asctime)s [%(levelname)-8s] [%(name)s:%(lineno)d] %(message)s", tz=pacific_tz)
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
-    # Console handler with basic info
-    console_handler = logging.StreamHandler()
-    console_formatter = PSTFormatter(
-        "%(asctime)s [%(levelname)-8s] - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    console_handler.setLevel(logging.INFO)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_formatter = PytzFormatter("%(asctime)s [%(levelname)-8s] %(message)s", tz=pacific_tz)
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    logging.getLogger("fsspec").setLevel(logging.WARNING)
+
+    logger.info(f"Logging configured. Level: {logging.getLevelName(logger.level)}")
+    logger.info(f"Log file: {log_filename}")
     return logger
 
+# --- Determine Output Directory and Setup Logging ---
+pacific_tz = pytz.timezone("America/Los_Angeles")
+timestamp = datetime.datetime.now(pacific_tz).strftime("%d_%B_%H_%M")
+OUTPUT_DIR = f"/scratch/gilbreth/{USERNAME}/fcnv2/ARCO_inference_output_{timestamp}"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+LOG_DIR = os.path.join(OUTPUT_DIR, "logs")
+logger = setup_logging(LOG_DIR)
 
-#create timstamp for current time using pytz in pacific timezone
-timestamp = datetime.now(timezone(timedelta(hours=-7))).strftime("%d_%B_%H_%M")
-# create os.makedirs for output_dir if not exists
-OUTPUT_DIR = f"/scratch/gilbreth/gupt1075/fcnv2/ARCO_inference_output_{timestamp}"
-os.makedirs(f"{OUTPUT_DIR}", exist_ok=True)
-logger = setup_logging(OUTPUT_DIR)
+logger.info(f"Using Output Directory: {OUTPUT_DIR}")
 
-
-
-
-# Add earth2mip to Python path
-if EARTH2MIP_PATH not in sys.path:
-    sys.path.append(EARTH2MIP_PATH)
-    logger.info(f"Added {EARTH2MIP_PATH} to Python path.")
-
-
-
-
-
-
-# --- Earth-2 MIP Imports (after setting env vars) ---
-# try:
-#     from earth2mip import registry
-#     from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
-#     # We are not using cds or inference_ensemble.run_basic_inference anymore
-# except ImportError as e:
-#     logger.info(f"Error importing earth2mip components: {e}")
-#     logger.info("Please ensure earth2mip is installed correctly.")
-#     sys.exit(1)
-
-
-
-from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
-# Add inference_ensemble specific imports
-from typing import Any, Optional
-from earth2mip import initial_conditions, regrid, time_loop
-from earth2mip.ensemble_utils import (
-    generate_bred_vector,
-    generate_noise_correlated,
-    generate_noise_grf
-)
-from earth2mip.schema import EnsembleRun, PerturbationStrategy
-from earth2mip.time_loop import TimeLoop
-from modulus.distributed.manager import DistributedManager
-
-
-
-
-
-
+# --- Load Environment Variables (optional) ---
 dotenv.load_dotenv()
+logger.info("Checked for .env file.")
 
-# With the enviroment variables set now we import Earth-2 MIP
-from earth2mip import inference_ensemble, registry
-from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
-
-logging.warning("Fetching model package...")
-
-
-package = registry.get_model("fcnv2")
-
-
+# --- Earth-2 MIP Imports (AFTER setting env vars and sys.path) ---
+try:
+    from earth2mip import registry
+    from earth2mip.networks.fcnv2_sm import load as fcnv2_sm_load
+    print("Successfully imported earth2mip components.")
+except ImportError as e:
+    print(f"Error importing earth2mip components: {e}")
+    print("Please ensure earth2mip is installed correctly and EARTH2MIP_PATH is correct.")
+    sys.exit(1)
+except Exception as e:
+    print(f"An unexpected error occurred during earth2mip import: {e}")
+    sys.exit(1)
 
 
 # --- Core Inference Function (adapted from main_inference) ---
+# [ ... run_inference function remains the same as in your previous code ... ]
+# Ensure logger calls within run_inference use the passed 'logger' object.
+
+
 def run_inference(model_inference, initial_state_tensor, config, logger):
     """Runs the autoregressive ensemble forecast for a single initial condition."""
-    
-    n_ensemble = config['ensemble_members']
-    simulation_length = config['simulation_length']
-    device = next(model_inference.parameters()).device # Get device from model
-    output_freq = config.get('output_frequency', 1)
-    
+
+    n_ensemble = config["ensemble_members"]
+    simulation_length = config["simulation_length"]
+    # Ensure device is fetched correctly even if model is wrapped (e.g., DistributedDataParallel)
+    if hasattr(model_inference, "module"):
+        device = next(model_inference.module.parameters()).device
+    else:
+        device = next(model_inference.parameters()).device
+    output_freq = config.get("output_frequency", 1)
+
     logger.info(f"Starting inference: {n_ensemble} members, {simulation_length} steps.")
     logger.info(f"Output frequency: Every {output_freq} steps.")
     logger.info(f"Running on device: {device}")
@@ -246,99 +134,149 @@ def run_inference(model_inference, initial_state_tensor, config, logger):
     logger.info(f"Created ensemble batch shape: {batch_tensor.shape}")
 
     # --- Normalization and Perturbation ---
+
+    # +++ DEBUGGING BLOCK +++
+    logger.debug("--- Debugging before normalization ---")
+    logger.debug(f"Type of model_inference object: {type(model_inference)}")
+    # Check if the 'normalize' attribute exists before trying to access it heavily
+    if hasattr(model_inference, "normalize"):
+        normalize_attr = model_inference.normalize
+        logger.debug(f"Type of model_inference.normalize attribute: {type(normalize_attr)}")
+        logger.debug(f"Value of model_inference.normalize attribute: {normalize_attr}")
+        is_callable = callable(normalize_attr)
+        logger.debug(f"Is model_inference.normalize callable? {is_callable}")
+        if not is_callable:
+            logger.error("FATAL: model_inference.normalize is NOT a callable method!")
+            # You might want to inspect the whole object here if needed
+            # logger.debug(f"Full model_inference object attributes: {dir(model_inference)}")
+            raise TypeError(f"Attribute 'normalize' on {type(model_inference)} is not callable (it's a {type(normalize_attr)}).")
+    else:
+        logger.error("FATAL: model_inference object does not have a 'normalize' attribute!")
+        raise AttributeError("model_inference object missing 'normalize' attribute.")
+    logger.debug("--- End Debugging block ---")
+    # +++ END DEBUGGING BLOCK +++
+
     # Normalize the entire batch first
     try:
+        logger.debug("Attempting to call model_inference.normalize(batch_tensor)...")
+        # This is the line that previously failed
         batch_tensor_normalized = model_inference.normalize(batch_tensor)
-        logger.info("Normalized initial ensemble batch.")
-        logger.debug(f"Normalized batch tensor shape: {batch_tensor_normalized.shape}")
+        logger.info("Normalization call successful.")  # Log success if it passes
+        logger.debug(f"Normalized batch tensor shape: {batch_tensor_normalized.shape}, dtype: {batch_tensor_normalized.dtype}, device: {batch_tensor_normalized.device}")
+        # Check for NaNs after normalization
+        if torch.isnan(batch_tensor_normalized).any():
+            logger.warning("NaNs detected in normalized batch tensor!")
+    except TypeError as te:  # Catch the specific error we saw
+        logger.error(f"Caught TypeError during normalization call: {te}", exc_info=True)
+        # Re-iterate the state based on debugging block above if helpful
+        logger.error(f"This confirms 'model_inference.normalize' was not a method. Type was {type(model_inference.normalize)}.")
+        raise  # Re-raise the exception after logging
     except Exception as e:
-        logger.error(f"Error during normalization: {e}", exc_info=True)
+        # Log any other unexpected errors during normalization
+        logger.error(f"An unexpected error occurred during normalization: {e}", exc_info=True)
         raise
 
-    batch_tensor_perturbed_normalized = batch_tensor_normalized.clone() # Start with normalized state
+    # --- Perturbation (Rest of the function remains the same) ---
+    batch_tensor_perturbed_normalized = batch_tensor_normalized.clone()  # Start with normalized state
 
-    if config['noise_amplitude'] > 0 and n_ensemble > 1:
-         pert_strategy = config['perturbation_strategy']
-         noise_amp = config['noise_amplitude']
-         logger.info(f"Applying perturbation noise (amplitude: {noise_amp:.4f}). Strategy: {pert_strategy}")
-         
-         # Placeholder: Gaussian noise applied to normalized data
-         # Note: 'correlated' strategy requires more sophisticated methods, potentially
-         # using earth2mip.perturbation if available and suitable for fcnv2_sm.
-         # This implementation uses simple Gaussian noise as in the example.
-         if pert_strategy != "correlated":
-             logger.warning(f"Perturbation strategy '{pert_strategy}' requested, but using simple Gaussian noise placeholder.")
-         else:
-             logger.warning("Using simplified Gaussian noise placeholder for 'correlated' strategy.")
+    if config["noise_amplitude"] > 0 and n_ensemble > 1:
+        pert_strategy = config["perturbation_strategy"]
+        noise_amp = config["noise_amplitude"]
+        logger.info(f"Applying perturbation noise (amplitude: {noise_amp:.4f}). Strategy: {pert_strategy}")
 
-         # Generate noise (ensure std deviation matches amplitude definition if needed)
-         # Assuming noise_amplitude directly scales std dev of standard normal noise
-         noise = torch.randn_like(batch_tensor_normalized) * noise_amp
-         
-         # Ensure first member is deterministic (no noise)
-         noise[0, :, :, :] = 0
-         
-         batch_tensor_perturbed_normalized += noise
-         logger.info("Applied placeholder Gaussian noise to normalized state (excluding member 0).")
-         
-         # Optional: Clamp values if normalization created bounds, though often not needed for Gaussian noise
-         # batch_tensor_perturbed_normalized = torch.clamp(batch_tensor_perturbed_normalized, min_val, max_val)
+        # Placeholder: Gaussian noise applied to normalized data
+        if pert_strategy != "correlated":
+            logger.warning(f"Perturbation strategy '{pert_strategy}' requested, but using simple Gaussian noise placeholder.")
+
+        noise = torch.randn_like(batch_tensor_normalized) * noise_amp
+        logger.debug(f"Generated noise tensor, shape: {noise.shape}, std before scaling: {torch.std(torch.randn_like(batch_tensor_normalized)):.4f}, after: {torch.std(noise):.4f}")
+
+        if n_ensemble > 1:
+            noise[0, :, :, :] = 0
+            logger.debug("Set noise for ensemble member 0 to zero.")
+
+        batch_tensor_perturbed_normalized += noise
+        logger.info("Applied placeholder Gaussian noise to normalized state (excluding member 0).")
+        if torch.isnan(batch_tensor_perturbed_normalized).any():
+            logger.warning("NaNs detected after adding noise!")
 
     else:
         logger.info("No perturbation noise applied (amplitude is 0 or ensemble size is 1).")
 
     # --- Autoregressive Loop ---
-    output_tensors_denorm = [] # Store denormalized outputs on CPU
-    current_state_normalized = batch_tensor_perturbed_normalized # Shape (E, C, H, W)
+    output_tensors_denorm = []  # Store denormalized outputs on CPU
+    current_state_normalized = batch_tensor_perturbed_normalized  # Shape (E, C, H, W)
+    logger.debug(f"Initial state for loop shape: {current_state_normalized.shape}, dtype: {current_state_normalized.dtype}, device: {current_state_normalized.device}")
 
     # Store initial state (t=0) - denormalized
     try:
+        logger.debug("Denormalizing initial state (t=0) for storage.")
+        # +++ Add similar debugging for denormalize if needed +++
+        if not hasattr(model_inference, "denormalize") or not callable(model_inference.denormalize):
+            logger.error(f"model_inference.denormalize is missing or not callable! Type: {type(getattr(model_inference, 'denormalize', None))}")
+            raise AttributeError("Cannot call denormalize method.")
+        # +++ End denormalize debug +++
         initial_state_denormalized = model_inference.denormalize(current_state_normalized)
         if 0 % output_freq == 0:
             logger.debug("Saving initial state (t=0).")
-            output_tensors_denorm.append(initial_state_denormalized.cpu()) # Store on CPU
+            output_tensors_denorm.append(initial_state_denormalized.cpu())
+        logger.debug(f"Stored initial state shape (on CPU): {output_tensors_denorm[0].shape}")
     except Exception as e:
         logger.error(f"Error during initial state denormalization: {e}", exc_info=True)
         raise
 
     logger.info(f"Model time step: {model_inference.time_step}")
-    logger.info("Autoregressive loop starting...")
+    logger.info(f"Autoregressive loop starting for {simulation_length} steps...")
 
     inference_times = []
-    with torch.no_grad(): # Essential for inference
+    with torch.no_grad():  # Essential for inference
         for step in range(simulation_length):
             step_num = step + 1
             start_time = time.time()
-            logger.debug(f"Step {step_num}/{simulation_length} - Input shape: {current_state_normalized.shape}")
+            logger.debug(f"Step {step_num}/{simulation_length} - Input shape: {current_state_normalized.shape}, dtype: {current_state_normalized.dtype}")
+
+            if torch.isnan(current_state_normalized).any():
+                logger.error(f"NaN detected in input state before step {step_num}. Aborting.")
+                return None
 
             # Model prediction (expects normalized input, outputs normalized prediction)
             try:
-                next_state_normalized = model_inference(current_state_normalized)
-                logger.debug(f"Step {step_num}/{simulation_length} - Raw model output shape: {next_state_normalized.shape}")
-                
-                # Simple check for NaN/Inf in model output
+                # Ensure model_inference itself is callable (the __call__ method)
+                if not callable(model_inference):
+                    logger.error(f"model_inference object itself is not callable! Type: {type(model_inference)}")
+                    raise TypeError("model_inference is not callable.")
+
+                next_state_normalized = model_inference(current_state_normalized)  # Calls __call__ -> forward
+                logger.debug(f"Step {step_num}/{simulation_length} - Raw model output shape: {next_state_normalized.shape}, dtype: {next_state_normalized.dtype}")
+
                 if torch.isnan(next_state_normalized).any() or torch.isinf(next_state_normalized).any():
                     logger.error(f"NaN or Inf detected in model output at step {step_num}. Aborting.")
-                    return None # Indicate failure
+                    return None  # Indicate failure
 
             except Exception as e:
                 logger.error(f"Error during model forward pass at step {step_num}: {e}", exc_info=True)
-                return None # Indicate failure
+                return None  # Indicate failure
 
             # Denormalize for saving
             try:
+                # +++ Add similar debugging for denormalize if needed +++
+                if not hasattr(model_inference, "denormalize") or not callable(model_inference.denormalize):
+                    logger.error(f"model_inference.denormalize is missing or not callable! Type: {type(getattr(model_inference, 'denormalize', None))}")
+                    raise AttributeError("Cannot call denormalize method.")
+                # +++ End denormalize debug +++
                 output_denormalized = model_inference.denormalize(next_state_normalized)
+                if torch.isnan(output_denormalized).any():
+                    logger.warning(f"NaNs detected in denormalized output at step {step_num}!")
+
             except Exception as e:
                 logger.error(f"Error during denormalization at step {step_num}: {e}", exc_info=True)
-                # Decide whether to continue or abort. Let's try to continue but log the error.
-                output_denormalized = next_state_normalized.clone() # Save normalized if denorm fails
+                output_denormalized = next_state_normalized.clone()
                 logger.warning(f"Saving normalized output for step {step_num} due to denormalization error.")
-
 
             # Store output based on frequency
             if step_num % output_freq == 0:
                 logger.debug(f"Saving output for step {step_num}")
-                output_tensors_denorm.append(output_denormalized.cpu()) # Store on CPU to save GPU memory
+                output_tensors_denorm.append(output_denormalized.cpu())
 
             # Update state for next iteration
             current_state_normalized = next_state_normalized
@@ -356,11 +294,12 @@ def run_inference(model_inference, initial_state_tensor, config, logger):
         logger.warning("No output tensors were saved!")
         return None
 
-    # Concatenate along a new 'time' dimension
-    # Each tensor in output_tensors_denorm has shape (E, C, H, W)
     try:
-        final_output_tensor = torch.stack(output_tensors_denorm, dim=1) # Shape: (E, T_out, C, H, W)
+        logger.debug(f"Stacking {len(output_tensors_denorm)} output tensors...")
+        final_output_tensor = torch.stack(output_tensors_denorm, dim=1)  # Shape: (E, T_out, C, H, W)
         logger.info(f"Final aggregated output tensor shape: {final_output_tensor.shape}")
+        if torch.isnan(final_output_tensor).any():
+            logger.warning("NaNs detected in the final aggregated output tensor!")
     except Exception as e:
         logger.error(f"Failed to stack output tensors: {e}", exc_info=True)
         return None
@@ -369,6 +308,8 @@ def run_inference(model_inference, initial_state_tensor, config, logger):
 
 
 # --- Save Output Function (adapted from main_inference) ---
+# [ ... save_output function remains the same as in your previous code ... ]
+# Ensure logger calls within save_output use the passed 'logger' object.
 def save_output(output_tensor, initial_time, time_step, channels, lat, lon, config, output_dir, logger):
     """Saves the forecast output tensor to a NetCDF file."""
 
@@ -376,194 +317,288 @@ def save_output(output_tensor, initial_time, time_step, channels, lat, lon, conf
         logger.error("Cannot save output, tensor is None.")
         return
 
-    # output_tensor shape: (E, T_out, C, H, W)
-    n_ensemble, n_time_out, n_channels, n_lat, n_lon = output_tensor.shape
-    output_freq = config.get('output_frequency', 1)
-    
-    logger.info("Preparing output for saving...")
-    logger.debug(f"Output tensor shape: {output_tensor.shape}")
-    logger.debug(f"Number of channels: {n_channels}, Expected channels: {len(channels)}")
-    logger.debug(f"Grid Lat shape: {lat.shape}, Lon shape: {lon.shape}")
-    
-    if n_channels != len(channels):
-        logger.error(f"Mismatch between channels in output tensor ({n_channels}) and provided channel names ({len(channels)}).")
-        # Attempt to save anyway, but channels dimension might be incorrect
-        channels_coord = np.arange(n_channels) # Use generic index if names mismatch
-    else:
-         channels_coord = channels
-
-    # Create time coordinates
-    # Use relativedelta for robustness with time steps (e.g., hours)
     try:
-        # Convert model time_step (timedelta) to relativedelta if possible, or use seconds
-        if isinstance(time_step, datetime.timedelta):
-            dt_step = relativedelta(seconds=time_step.total_seconds())
+        # output_tensor shape: (E, T_out, C, H, W)
+        n_ensemble, n_time_out, n_channels, n_lat, n_lon = output_tensor.shape
+        output_freq = config.get("output_frequency", 1)
+
+        logger.info("Preparing output for saving...")
+        logger.debug(f"Output tensor shape: {output_tensor.shape}, dtype: {output_tensor.dtype}")
+        logger.debug(f"Number of channels: {n_channels}, Expected channels from model: {len(channels)}")
+        logger.debug(f"Grid Lat shape: {lat.shape}, Lon shape: {lon.shape}")
+
+        if n_channels != len(channels):
+            logger.error(f"Mismatch between channels in output tensor ({n_channels}) and provided channel names ({len(channels)}). Saving with generic channel indices.")
+            channels_coord = np.arange(n_channels)  # Use generic index if names mismatch
+            channel_dim_name = "channel_idx"  # Use a different name to indicate mismatch
         else:
-            logger.warning(f"Unexpected time_step type: {type(time_step)}. Assuming it represents hours.")
-            dt_step = relativedelta(hours=time_step) # Adapt if time_step is different
+            channels_coord = channels
+            channel_dim_name = "channel"
 
-        time_coords = [initial_time + i * dt_step * output_freq for i in range(n_time_out)]
-        logger.debug(f"Generated {len(time_coords)} time coordinates starting from {initial_time.isoformat()}.")
-    except Exception as e:
-        logger.error(f"Failed to create time coordinates: {e}", exc_info=True)
-        # Fallback to simple integer index for time
-        time_coords = np.arange(n_time_out)
+        # Create time coordinates
+        time_coords = []
+        current_time = initial_time
+        # Add initial time (t=0)
+        time_coords.append(current_time)
+        # Generate forecast times
+        for i in range(1, n_time_out):
+            # Calculate time delta: i * output_freq * base_time_step
+            try:
+                # Ensure time_step is timedelta
+                if not isinstance(time_step, datetime.timedelta):
+                    logger.warning(f"Model time_step is not a timedelta ({type(time_step)}), assuming hours.")
+                    actual_time_step = datetime.timedelta(hours=time_step)
+                else:
+                    actual_time_step = time_step
 
+                # Time for the i-th saved output step (corresponds to model step i * output_freq)
+                forecast_step_number = i * output_freq
+                current_time = initial_time + forecast_step_number * actual_time_step
+                time_coords.append(current_time)
 
-    # Create DataArray
-    try:
-        # Ensure lat/lon are numpy arrays
-        lat_np = lat if isinstance(lat, np.ndarray) else lat.cpu().numpy()
-        lon_np = lon if isinstance(lon, np.ndarray) else lon.cpu().numpy()
+            except TypeError as te:
+                logger.error(f"TypeError calculating time coordinates at step {i}: {te}. Check time_step type.")
+                # Fallback to index if calculation fails
+                time_coords = np.arange(n_time_out)
+                break  # Stop trying to calculate time coords
+            except Exception as e:
+                logger.error(f"Error calculating time coordinates at step {i}: {e}", exc_info=True)
+                time_coords = np.arange(n_time_out)
+                break
+
+        logger.debug(f"Generated {len(time_coords)} time coordinates. First: {time_coords[0].isoformat() if time_coords else 'N/A'}, Last: {time_coords[-1].isoformat() if len(time_coords)>0 else 'N/A'}")
+        if len(time_coords) != n_time_out:
+            logger.warning(f"Generated {len(time_coords)} time coordinates, but expected {n_time_out}. Using indices instead.")
+            time_coords = np.arange(n_time_out)
+
+        # Ensure lat/lon are numpy arrays on CPU
+        lat_np = lat.cpu().numpy() if isinstance(lat, torch.Tensor) else np.asarray(lat)
+        lon_np = lon.cpu().numpy() if isinstance(lon, torch.Tensor) else np.asarray(lon)
+
+        # Create DataArray
+        logger.debug("Creating xarray DataArray...")
+        # Check for NaNs before creating DataArray
+        if np.isnan(output_tensor.numpy()).any():
+            logger.warning("NaNs present in the output tensor before saving to NetCDF!")
 
         forecast_da = xr.DataArray(
-            output_tensor.numpy(), # Convert tensor to numpy array
+            output_tensor.numpy(),  # Convert tensor to numpy array
             coords={
-                'ensemble': np.arange(n_ensemble),
-                'time': time_coords,
-                'channel': channels_coord,
-                'lat': lat_np,
-                'lon': lon_np,
+                "ensemble": np.arange(n_ensemble),
+                "time": time_coords,
+                channel_dim_name: channels_coord,  # Use dynamic channel dimension name
+                "lat": lat_np,
+                "lon": lon_np,
             },
-            dims=['ensemble', 'time', 'channel', 'lat', 'lon'],
-            name='forecast',
+            dims=["ensemble", "time", channel_dim_name, "lat", "lon"],
+            name="forecast",
             attrs={
-                'description': 'FCNv2-SM ensemble forecast output',
-                'model': config['weather_model'],
-                'simulation_length_steps': config['simulation_length'],
-                'output_frequency_steps': output_freq,
-                'ensemble_members': n_ensemble,
-                'initial_condition_time': initial_time.isoformat(),
-                'noise_amplitude': config['noise_amplitude'],
-                'perturbation_strategy': config['perturbation_strategy'],
-                'creation_date': datetime.datetime.now(datetime.timezone.utc).isoformat()
-            }
+                "description": f"{config['weather_model']} ensemble forecast output",
+                "model": config["weather_model"],
+                "simulation_length_steps": config["simulation_length"],
+                "output_frequency_steps": output_freq,
+                "ensemble_members": n_ensemble,
+                "initial_condition_time": initial_time.isoformat(),
+                "time_step_seconds": actual_time_step.total_seconds() if isinstance(actual_time_step, datetime.timedelta) else "unknown",
+                "noise_amplitude": config["noise_amplitude"],
+                "perturbation_strategy": config["perturbation_strategy"],
+                "creation_date": datetime.datetime.now(pytz.utc).isoformat(),
+                "pytorch_version": torch.__version__,
+                "numpy_version": np.__version__,
+                "xarray_version": xr.__version__,
+            },
         )
         logger.info("Created xarray DataArray.")
 
         # Convert to Dataset with each channel as a variable for better compatibility
-        forecast_ds = forecast_da.to_dataset(dim='channel')
-        logger.info("Converted DataArray to Dataset (channels as variables).")
+        # Handle potential channel name issues (e.g., invalid characters for variable names)
+        logger.debug(f"Converting DataArray to Dataset using dimension '{channel_dim_name}'...")
+        try:
+            forecast_ds = forecast_da.to_dataset(dim=channel_dim_name)
+            logger.info("Converted DataArray to Dataset (channels as variables).")
+        except Exception as e:
+            logger.error(f"Failed to convert DataArray to Dataset (dim='{channel_dim_name}'): {e}. Saving as DataArray instead.", exc_info=True)
+            # Fallback: save the DataArray directly if conversion fails
+            forecast_ds = forecast_da
 
-    except Exception as e:
-        logger.error(f"Failed to create xarray Dataset: {e}", exc_info=True)
-        return
+        # Define output filename
+        ic_time_str = initial_time.strftime("%Y%m%d_%H%M%S")
+        # Add ensemble size and sim length to filename for clarity
+        output_filename = os.path.join(output_dir, f"{config['weather_model']}_ensemble{n_ensemble}_sim{config['simulation_length']}_{ic_time_str}.nc")
 
-    # Define output filename
-    ic_time_str = initial_time.strftime('%Y%m%d_%H%M%S')
-    output_filename = os.path.join(output_dir, f"fcnv2_sm_ensemble_{ic_time_str}.nc")
+        # Ensure output directory exists
+        os.makedirs(output_dir, exist_ok=True)
 
-    # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving forecast output to: {output_filename}")
 
-    logger.info(f"Saving forecast output to: {output_filename}")
-    try:
         # Define encoding for compression (optional but recommended)
-        encoding = {var: {'zlib': True, 'complevel': 5} for var in forecast_ds.data_vars}
-        
-        # Specify unlimited dimension for time if needed (good practice)
-        # forecast_ds.encoding['unlimited_dims'] = {'time'}
+        # Apply encoding only if saving as Dataset
+        encoding = {}
+        if isinstance(forecast_ds, xr.Dataset):
+            encoding = {var: {"zlib": True, "complevel": 5, "_FillValue": -9999.0} for var in forecast_ds.data_vars}  # Add FillValue
+            logger.debug(f"Applying encoding to variables: {list(forecast_ds.data_vars.keys())}")
+        elif isinstance(forecast_ds, xr.DataArray):
+            encoding = {forecast_ds.name: {"zlib": True, "complevel": 5, "_FillValue": -9999.0}}
+            logger.debug(f"Applying encoding to DataArray: {forecast_ds.name}")
 
         start_save = time.time()
-        forecast_ds.to_netcdf(output_filename, encoding=encoding)
+        forecast_ds.to_netcdf(output_filename, encoding=encoding, engine="netcdf4")  # Specify engine
         end_save = time.time()
-        logger.info(f"Save complete. Time taken: {end_save - start_save:.2f} seconds.")
+        # Check file size
+        file_size_mb = os.path.getsize(output_filename) / (1024 * 1024)
+        logger.info(f"Save complete. Time taken: {end_save - start_save:.2f} seconds. File size: {file_size_mb:.2f} MB")
+
     except Exception as e:
-        logger.error(f"Failed to save output NetCDF file: {e}", exc_info=True)
+        logger.error(f"Failed during the save_output process: {e}", exc_info=True)
+        # Attempt to remove potentially corrupted file
+        if "output_filename" in locals() and os.path.exists(output_filename):
+            try:
+                os.remove(output_filename)
+                logger.warning(f"Removed potentially corrupted file: {output_filename}")
+            except OSError as oe:
+                logger.error(f"Failed to remove corrupted file {output_filename}: {oe}")
 
 
 # --- Main Pipeline Function ---
 def main(args):
     """Main pipeline execution function."""
-    
-    # Setup logging (use output dir for logs)
-    # log_dir = os.path.join(args.output_path, "logs")
-    # logger = setup_logging(log_dir, log_level=logging.INFO if not args.debug else logging.DEBUG)
 
     logger.info("========================================================")
     logger.info(" Starting FCNv2-SM Inference Pipeline from NumPy ICs")
     logger.info("========================================================")
-    logger.info(f"Run arguments: {vars(args)}")
+    logger.info(f"Full command line arguments: {sys.argv}")
+    logger.info(f"Parsed arguments: {vars(args)}")
+    logger.info(f"Effective MODEL_REGISTRY: {os.environ.get('MODEL_REGISTRY', 'Not Set')}")
 
     # --- Environment and Setup ---
     if args.gpu >= 0 and torch.cuda.is_available():
-        device = torch.device(f"cuda:{args.gpu}")
-        torch.cuda.set_device(device)
-        logger.info(f"Using GPU: {torch.cuda.get_device_name(device)}")
+        try:
+            device = torch.device(f"cuda:{args.gpu}")
+            torch.cuda.set_device(device)
+            logger.info(f"Attempting to use GPU: {args.gpu} ({torch.cuda.get_device_name(device)})")
+            logger.info(f"CUDA version: {torch.version.cuda}")
+            logger.info(f"PyTorch version: {torch.__version__}")
+        except Exception as e:
+            logger.error(f"Failed to set CUDA device {args.gpu}: {e}. Falling back to CPU.", exc_info=True)
+            device = torch.device("cpu")
+            logger.info("Using CPU.")
     else:
         device = torch.device("cpu")
-        logger.info("Using CPU.")
+        if args.gpu >= 0:
+            logger.warning(f"GPU {args.gpu} requested, but CUDA not available. Using CPU.")
+        else:
+            logger.info("Using CPU.")
 
     # --- Load Model ---
-    logger.info("Loading FCNv2-SM model...")
+    model_id = "fcnv2_sm"  # Use the small version
+    logger.info(f"Loading {model_id} model...")
     try:
-        package = registry.get_model("fcnv2_sm")
-        logger.info(f"Found model package: {package}")
-        # Load model onto the specified device
+        logger.info(f"Fetching model package for '{model_id}' from registry: {os.environ.get('MODEL_REGISTRY')}")
+        package = registry.get_model(model_id)
+        if package is None:
+            logger.error(f"Failed to get model package for '{model_id}'. Check registry path and model name.")
+            sys.exit(1)
+        logger.info(f"Found model package: {package}. Root path: {package.root}")
+
+        # Add logging inside the load function if possible (by editing earth2mip source)
+        # or log parameters being passed here
+        logger.info(f"Calling {model_id}_load with package root: {package.root}, device: {device}, pretrained: True")
         model_inference = fcnv2_sm_load(package, device=device, pretrained=True)
-        model_inference.eval() # Set model to evaluation mode
-        logger.info("FCNv2-SM model loaded successfully.")
+        model_inference.eval()  # Set model to evaluation mode
+
+        # Verification after loading
+        logger.info(f"{model_id} model loaded successfully to device: {next(model_inference.parameters()).device}.")
         logger.info(f"Model expects {len(model_inference.in_channel_names)} input channels.")
         logger.debug(f"Model input channels: {model_inference.in_channel_names}")
-        logger.info(f"Model output channels: {model_inference.out_channel_names}") # Usually same as input for weather models
+        # logger.info(f"Model output channels: {model_inference.out_channel_names}") # Usually same as input
         logger.info(f"Model grid: {model_inference.grid}")
         logger.info(f"Model time step: {model_inference.time_step}")
 
+    except FileNotFoundError as e:
+        logger.error(f"Model loading failed: Required file not found - {e}", exc_info=True)
+        logger.error(f"Please check that weights.tar, global_means.npy, global_stds.npy exist within {os.path.join(os.environ.get('MODEL_REGISTRY'), model_id)}")
+        sys.exit(1)
+    except _pickle.UnpicklingError as e:
+        logger.error(f"Model loading failed due to UnpicklingError: {e}", exc_info=False)  # Don't need full traceback again
+        logger.error("This usually means torch.load failed with weights_only=True (default in PyTorch >= 2.6).")
+        logger.error(f"Ensure you have modified '{EARTH2MIP_PATH}/earth2mip/networks/fcnv2_sm.py' to use 'torch.load(..., weights_only=False)'.")
+        sys.exit(1)
     except Exception as e:
-        logger.error(f"Failed to load model: {e}", exc_info=True)
-        logger.error("Ensure the model 'fcnv2_sm' is correctly registered or downloadable.")
-        logger.error(f"Checked registry path: {os.environ.get('MODEL_REGISTRY', 'Not set')}")
+        logger.error(f"An unexpected error occurred during model loading: {e}", exc_info=True)
         sys.exit(1)
 
     # --- Load Initial Conditions from NumPy file ---
     logger.info(f"Loading initial conditions from: {args.ic_file_path}")
+    if not os.path.exists(args.ic_file_path):
+        logger.error(f"Initial condition file not found: {args.ic_file_path}")
+        sys.exit(1)
     try:
         initial_conditions_np = np.load(args.ic_file_path)
-        logger.info(f"Loaded NumPy data with shape: {initial_conditions_np.shape}")
+        logger.info(f"Loaded NumPy data with shape: {initial_conditions_np.shape}, dtype: {initial_conditions_np.dtype}")
         # Expected shape: (num_times, num_channels, height, width)
         if initial_conditions_np.ndim != 4:
             raise ValueError(f"Expected 4 dimensions (time, channel, lat, lon), but got {initial_conditions_np.ndim}")
-        
-        num_ics, num_channels, _, _ = initial_conditions_np.shape
-        logger.info(f"Found {num_ics} initial conditions in the file.")
+
+        num_ics, num_channels, height, width = initial_conditions_np.shape
+        logger.info(f"Found {num_ics} initial conditions in the file. Grid size: {height}x{width}")
 
         # Validate channel count
-        if num_channels != len(model_inference.in_channel_names):
-            logger.error(f"Channel mismatch! Model expects {len(model_inference.in_channel_names)} channels, "
-                         f"but NumPy file has {num_channels} channels.")
+        model_channels = model_inference.in_channel_names
+        if num_channels != len(model_channels):
+            logger.error(f"Channel mismatch! Model expects {len(model_channels)} channels, but NumPy file has {num_channels} channels.")
+            logger.error(f"Model channels: {model_channels}")
             logger.error("Please ensure the NumPy file was created with the correct channels in the expected order.")
-            # Decide whether to exit or try to continue (exiting is safer)
             sys.exit(1)
-            # logger.warning("Attempting to proceed despite channel mismatch...") # Alternative if you want to risk it
         else:
             logger.info("Channel count matches model requirements.")
 
-    except FileNotFoundError:
-        logger.error(f"Initial condition file not found: {args.ic_file_path}")
-        sys.exit(1)
+        # Validate grid size (optional but good practice)
+        model_lat, model_lon = model_inference.grid.lat, model_inference.grid.lon
+        if height != len(model_lat) or width != len(model_lon):
+            logger.warning(f"Grid mismatch! Model grid is {len(model_lat)}x{len(model_lon)}, but NumPy file grid is {height}x{width}.")
+            logger.warning("Ensure the NumPy file represents data on the model's native grid.")
+            # Decide if this is critical - for now, just warn.
+            # sys.exit(1)
+
     except Exception as e:
         logger.error(f"Failed to load or validate NumPy file: {e}", exc_info=True)
         sys.exit(1)
 
     # --- Define Timestamps for the loaded ICs ---
-    # Based on the prompt: 14 Jan 2018, 00Z, 06Z, 12Z, 18Z
-    # Ensure this matches the actual content of your .npy file order
-    base_date = datetime.datetime(2018, 1, 14)
-    ic_timestamps = [
-        base_date.replace(hour=0, minute=0, second=0, microsecond=0),
-        base_date.replace(hour=6, minute=0, second=0, microsecond=0),
-        base_date.replace(hour=12, minute=0, second=0, microsecond=0),
-        base_date.replace(hour=18, minute=0, second=0, microsecond=0),
-    ]
-    if len(ic_timestamps) != num_ics:
-        logger.error(f"Mismatch between expected number of ICs (4 based on prompt) and loaded ICs ({num_ics}).")
-        logger.error("Adjust the 'ic_timestamps' list in the script to match your NumPy file content.")
-        # Fallback: Generate generic timestamps if needed, but specific times are better.
-        # ic_timestamps = [base_date + datetime.timedelta(hours=i*6) for i in range(num_ics)] # Example fallback
-        sys.exit(1)
-    logger.info(f"Using the following timestamps for the {num_ics} loaded ICs:")
-    for ts in ic_timestamps:
-        logger.info(f"- {ts.isoformat()}")
+    # Ensure this matches the actual content and order of your .npy file
+    try:
+        # Example: Infer base date from filename if possible (adjust logic as needed)
+        fname = os.path.basename(args.ic_file_path)
+        # Simple parsing assuming format like '..._YYYY_MM_DD...' or '..._YYYYMMDD...'
+        import re
+
+        match = re.search(r"(\d{4})_(\d{2})_(\d{2})", fname) or re.search(r"(\d{8})", fname)
+        if match:
+            if len(match.groups()) == 3:
+                year, month, day = map(int, match.groups())
+            else:  # Match YYYYMMDD
+                date_str = match.group(1)
+                year, month, day = int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8])
+            base_date = datetime.datetime(year, month, day, tzinfo=pytz.utc)  # Assume UTC if not specified
+            logger.info(f"Inferred base date from filename: {base_date.strftime('%Y-%m-%d')}")
+        else:
+            # Fallback to hardcoded date if filename parsing fails
+            base_date = datetime.datetime(2018, 1, 14, tzinfo=pytz.utc)  # Make timezone aware (UTC is standard for IFS/ERA)
+            logger.warning(f"Could not infer date from filename, using default: {base_date.strftime('%Y-%m-%d')}")
+
+        # Generate timestamps assuming 6-hourly intervals starting at 00Z
+        ic_timestamps = [base_date + datetime.timedelta(hours=i * 6) for i in range(num_ics)]
+
+    except Exception as e:
+        logger.error(f"Error determining timestamps for ICs: {e}. Using generic indices.", exc_info=True)
+        ic_timestamps = list(range(num_ics))  # Fallback
+
+    logger.info(f"Using the following timestamps/indices for the {num_ics} loaded ICs:")
+    for i, ts in enumerate(ic_timestamps):
+        if isinstance(ts, datetime.datetime):
+            logger.info(f"- IC {i}: {ts.isoformat()}")
+        else:
+            logger.info(f"- IC {i}: Index {ts}")
 
     # --- Prepare Inference Configuration ---
     inference_config = {
@@ -571,119 +606,111 @@ def main(args):
         "noise_amplitude": args.noise_amplitude,
         "simulation_length": args.simulation_length,
         "output_frequency": args.output_frequency,
-        "weather_model": "fcnv2_sm", # Model name for metadata
+        "weather_model": model_id,  # Use the actual model ID
         "perturbation_strategy": args.perturbation_strategy,
     }
     logger.info(f"Inference Configuration: {inference_config}")
 
     # --- Run Inference for each Initial Condition ---
-    output_dir = args.output_path
-    os.makedirs(output_dir, exist_ok=True)
-    logger.info(f"Output will be saved to: {output_dir}")
+    # Use the specific output subdirectory passed via args
+    netcdf_output_dir = args.output_path
+    os.makedirs(netcdf_output_dir, exist_ok=True)
+    logger.info(f"NetCDF output files will be saved to: {netcdf_output_dir}")
 
     num_ics_processed = 0
     num_ics_failed = 0
 
+    total_start_time = time.time()
+
     for i, initial_time in enumerate(ic_timestamps):
-        logger.info(f"--- Processing Initial Condition {i+1}/{num_ics}: {initial_time.isoformat()} ---")
-        
+        time_label = initial_time.isoformat() if isinstance(initial_time, datetime.datetime) else f"Index_{initial_time}"
+        logger.info(f"--- Processing Initial Condition {i+1}/{num_ics}: {time_label} ---")
+
         # Select the i-th initial condition from the loaded NumPy array
-        ic_data_np = initial_conditions_np[i] # Shape: (C, H, W)
-        
-        # Convert to PyTorch Tensor, add batch dimension, and move to device
+        ic_data_np = initial_conditions_np[i]  # Shape: (C, H, W)
+
+        # Convert to PyTorch Tensor, add batch dimension
         try:
-            # Add batch dimension: (1, C, H, W)
+            # Add batch dimension: (1, C, H, W), ensure float32
             initial_state_tensor = torch.from_numpy(ic_data_np).unsqueeze(0).float()
-            logger.debug(f"Prepared initial state tensor from NumPy slice, initial shape: {initial_state_tensor.shape}")
+            logger.debug(f"Prepared initial state tensor from NumPy slice, shape: {initial_state_tensor.shape}, dtype: {initial_state_tensor.dtype}")
         except Exception as e:
-            logger.error(f"Failed to convert NumPy slice to tensor for IC {initial_time}: {e}", exc_info=True)
+            logger.error(f"Failed to convert NumPy slice {i} to tensor: {e}", exc_info=True)
             num_ics_failed += 1
-            continue # Skip to the next IC
+            continue  # Skip to the next IC
 
         # Run the forecast
         start_run = time.time()
-        output_tensor = run_inference(
-            model_inference=model_inference,
-            initial_state_tensor=initial_state_tensor,
-            config=inference_config,
-            logger=logger
-        )
+        output_tensor = run_inference(model_inference=model_inference, initial_state_tensor=initial_state_tensor, config=inference_config, logger=logger)  # Pass the logger object
         end_run = time.time()
 
         if output_tensor is not None:
-            logger.info(f"Inference run for IC {initial_time} completed in {end_run - start_run:.2f} seconds.")
+            logger.info(f"Inference run for IC {time_label} completed in {end_run - start_run:.2f} seconds.")
             # Save the output
-            save_output(
-                output_tensor=output_tensor,
-                initial_time=initial_time,
-                time_step=model_inference.time_step, # Get timedelta from model
-                channels=model_inference.in_channel_names, # Use model's channel names
-                lat=model_inference.grid.lat, # Get lat/lon from model grid
-                lon=model_inference.grid.lon,
-                config=inference_config,
-                output_dir=output_dir,
-                logger=logger
-            )
+            save_output(output_tensor=output_tensor, initial_time=initial_time if isinstance(initial_time, datetime.datetime) else base_date, time_step=model_inference.time_step, channels=model_inference.in_channel_names, lat=model_inference.grid.lat, lon=model_inference.grid.lon, config=inference_config, output_dir=netcdf_output_dir, logger=logger)  # Use base_date if only index available  # Get timedelta from model  # Use model's channel names  # Get lat/lon from model grid  # Save to the specific NetCDF dir  # Pass the logger object
             num_ics_processed += 1
         else:
-            logger.error(f"Inference failed for IC {initial_time}. No output generated.")
+            logger.error(f"Inference failed for IC {time_label}. No output generated.")
             num_ics_failed += 1
 
         # Optional: Clear CUDA cache if memory is an issue between runs
-        if device.type == 'cuda':
-             torch.cuda.empty_cache()
-             logger.debug("Cleared CUDA cache.")
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+            logger.debug("Cleared CUDA cache.")
+
+    total_end_time = time.time()
+    logger.info(f"--- Total processing time for {num_ics} ICs: {total_end_time - total_start_time:.2f} seconds ---")
 
     # --- Final Summary ---
     logger.info("--- Inference Loop Finished ---")
     logger.info(f"Successfully processed {num_ics_processed} initial conditions.")
     if num_ics_failed > 0:
         logger.warning(f"Failed to process {num_ics_failed} initial conditions.")
+    logger.info(f"Output NetCDF files saved in: {netcdf_output_dir}")
+    logger.info(f"Log file saved in: {LOG_DIR}")
     logger.info("========================================================")
     logger.info(" FCNv2-SM Inference Pipeline Finished ")
     logger.info("========================================================")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FCNv2-SM Inference Pipeline using initial conditions from a NumPy file.")
 
     # Input/Output paths
-    parser.add_argument("--ic-file-path", type=str,
-                        default="/scratch/gilbreth/gupt1075/fcnv2/ARCO_data_73_channels/arco_data/arco_data_start_14_January_2018_end_14_January_2018_14_January_2018.npy",
-                        help="Path to the NumPy file containing initial conditions (shape: T, C, H, W).")
-    parser.add_argument("-o", "--output-path", type=str,
-                        default=f"{OUTPUT_DIR}/saved_netcdf/",
-                        help="Directory to save output NetCDF files.")
+    parser.add_argument("--ic-file-path", type=str, default=f"/scratch/gilbreth/{USERNAME}/fcnv2/ARCO_data_73_channels/arco_data/arco_data_start_14_January_2018_end_14_January_2018_14_January_2018.npy", help="Path to the NumPy file containing initial conditions (shape: T, C, H, W).")
+    # Default output path uses the dynamically generated OUTPUT_DIR
+    parser.add_argument("-o", "--output-path", type=str, default=os.path.join(OUTPUT_DIR, "saved_netcdf"), help="Directory to save output NetCDF files.")
 
     # Inference parameters
-    parser.add_argument("-sim", "--simulation-length", type=int, default=10,
-                        help="Number of autoregressive steps.")
-    parser.add_argument("-ef", "--output-frequency", type=int, default=1,
-                        help="Frequency (in steps) to save output states (e.g., 1 = save every step).")
-    parser.add_argument("-ens", "--ensemble-members", type=int, default=4,
-                        help="Number of ensemble members (>=1).")
-    parser.add_argument("-na", "--noise-amplitude", type=float, default=0.05,
-                        help="Amplitude for perturbation noise (if ensemble_members > 1). Set to 0 for no noise.")
-    parser.add_argument("-ps", "--perturbation-strategy", type=str, default="gaussian",
-                        choices=["gaussian", "correlated", "none"], # Note: 'correlated' uses gaussian placeholder here
-                        help="Perturbation strategy (currently uses Gaussian placeholder).")
-    
+    parser.add_argument("-sim", "--simulation-length", type=int, default=10, help="Number of autoregressive steps (forecast lead time in model steps).")
+    parser.add_argument("-ef", "--output-frequency", type=int, default=1, help="Frequency (in steps) to save output states (e.g., 1 = save every step).")
+    parser.add_argument("-ens", "--ensemble-members", type=int, default=4, help="Number of ensemble members (>=1).")
+    parser.add_argument("-na", "--noise-amplitude", type=float, default=0.05, help="Amplitude for perturbation noise (if ensemble_members > 1). Set to 0 for no noise.")
+    parser.add_argument("-ps", "--perturbation-strategy", type=str, default="gaussian", choices=["gaussian", "correlated", "none"], help="Perturbation strategy (currently uses Gaussian placeholder).")  # Note: 'correlated' uses gaussian placeholder here
+
     # System parameters
-    parser.add_argument("--gpu", type=int, default=0,
-                        help="GPU ID to use (-1 for CPU).")
-    parser.add_argument("--debug", action='store_true',
-                        help="Enable debug logging.")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU ID to use (-1 for CPU).")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
 
     args = parser.parse_args()
+
+    # Ensure the main output directory exists before potentially setting logger level
+    os.makedirs(args.output_path, exist_ok=True)
+
+    # Adjust logger level if debug flag is set
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        # Propagate debug level to handlers if needed
+        for handler in logger.handlers:
+            handler.setLevel(logging.DEBUG)
+        logger.info("Debug logging enabled.")
 
     try:
         main(args)
     except Exception as e:
-        # Use root logger if setup failed, otherwise use configured logger
+        # Use the configured logger if available
         try:
-            logger = logging.getLogger("FCNv2Inference")
-            if not logger.hasHandlers(): # Check if handlers were added
-                 raise RuntimeError("Logging not configured")
             logger.critical(f"Critical pipeline failure: {str(e)}", exc_info=True)
-        except Exception:
-             logging.critical(f"Critical pipeline failure before logging setup or after failure: {str(e)}", exc_info=True) # Fallback basic logging
+        except NameError:  # logger might not be defined if setup failed early
+            logging.critical(f"Critical pipeline failure before logger setup: {str(e)}", exc_info=True)  # Fallback basic logging
         sys.exit(1)
