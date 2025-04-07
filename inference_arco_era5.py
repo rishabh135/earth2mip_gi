@@ -1,5 +1,3 @@
-
-
 import numpy as np
 import datetime
 from datetime import timezone, timedelta
@@ -99,212 +97,390 @@ except Exception as e:
     sys.exit(1)
 
 
+
+
+import earth2mip.grid
+from earth2mip import (
+    ModelRegistry,
+    loaders,
+    model_registry,
+    registry,
+    schema,
+    time_loop,
+)
+
 # --- Core Inference Function (adapted from main_inference) ---
 # [ ... run_inference function remains the same as in your previous code ... ]
 # Ensure logger calls within run_inference use the passed 'logger' object.
 
 
-def run_inference(model_inference, initial_state_tensor, config, logger):
-    """Runs the autoregressive ensemble forecast for a single initial condition."""
+
+
+
+
+
+
+
+
+
+
+
+"""
+
+Key Changes in run_inference:
+
+    initial_time_dt Argument: Added initial_time_dt (a datetime object) as a required argument.
+
+    Get n_history: Retrieves n_history from the model_inference object (defaulting to 0).
+
+    Initial State Preparation:
+
+        Creates the 4D ensemble batch (E, C, H, W).
+
+        Unsqueezes it to the 5D shape (E, n_history+1, C, H, W) required by the TimeLoop.
+
+    Normalization/Perturbation:
+
+        Normalizes the initial 5D state using model_inference.normalize().
+
+        Applies perturbation (if configured) to this initial normalized state.
+
+    TimeLoop Initialization: Calls iterator = model_inference(time=initial_time_dt, x=initial_state_perturbed_norm_5d). This passes the required time and the prepared initial (perturbed, normalized) state x.
+
+    Iteration:
+
+        Replaces the manual for step in range(simulation_length): loop.
+
+        Iterates over the iterator obtained from model_inference().
+
+        The loop runs simulation_length + 1 times to get the initial state plus the forecast steps.
+
+        It extracts the data_denorm yielded by the iterator at each step.
+
+    Output Collection: Appends data_denorm.cpu() to output_tensors_denorm based on output_freq.
+
+    Stacking: Stacks the collected 4D tensors along dim=1 to create the final 5D output (E, T_out, C, H, W).
+
+    Logging: Updated logs to reflect the use of the iterator and the steps involved.
+
+How to Update Your Main Script (inference_arco_73_numpy.py):
+
+You need to modify the loop in your main function where run_inference is called to pass the initial_time datetime object.
+
+      
+
+
+"""
+
+
+def run_inference(
+    model_inference: time_loop.TimeLoop, # Type hint helps clarity
+    initial_state_tensor: torch.Tensor, # Shape (1, C, H, W)
+    initial_time_dt: datetime.datetime, # Add initial time argument
+    config: dict,
+    logger: logging.Logger,
+):
+    """Runs the autoregressive ensemble forecast using the TimeLoop interface."""
 
     n_ensemble = config["ensemble_members"]
-    simulation_length = config["simulation_length"]
-    # Ensure device is fetched correctly even if model is wrapped (e.g., DistributedDataParallel)
-    if hasattr(model_inference, "module"):
-        device = next(model_inference.module.parameters()).device
-    else:
-        device = next(model_inference.parameters()).device
+    simulation_length = config["simulation_length"] # Number of forecast steps *after* t=0
     output_freq = config.get("output_frequency", 1)
+    noise_amp = config.get("noise_amplitude", 0.0)
+    pert_strategy = config.get("perturbation_strategy", "gaussian")
+    n_history = getattr(model_inference, 'n_history', 0) # Get history length from model
 
-    logger.info(f"Starting inference: {n_ensemble} members, {simulation_length} steps.")
+    # Ensure device is fetched correctly
+    try:
+        device = model_inference.device
+    except AttributeError:
+        # Fallback if .device attribute isn't directly on the object
+        logger.warning("Could not get device directly from model_inference.device, using parameter device.")
+        if hasattr(model_inference, 'module'):
+            device = next(model_inference.module.parameters()).device
+        else:
+            device = next(model_inference.parameters()).device
+
+    logger.info(f"Starting inference using TimeLoop: {n_ensemble} members, {simulation_length} steps.")
     logger.info(f"Output frequency: Every {output_freq} steps.")
     logger.info(f"Running on device: {device}")
+    logger.info(f"Model history steps (n_history): {n_history}")
 
-    # Ensure initial_state_tensor is on the correct device and has batch dim 1
-    # Shape expected: (1, C, H, W)
+    # --- Prepare Initial State for TimeLoop ---
+    # TimeLoop expects 5D input: (B, T, C, H, W) where T = n_history + 1
+    # Input initial_state_tensor is (1, C, H, W)
+
     if initial_state_tensor.dim() != 4 or initial_state_tensor.shape[0] != 1:
         logger.error(f"Initial state tensor has unexpected shape: {initial_state_tensor.shape}. Expected (1, C, H, W).")
-        raise ValueError("Invalid initial state tensor shape")
-    initial_state_tensor = initial_state_tensor.to(device)
-    logger.debug(f"Initial state tensor shape (on device): {initial_state_tensor.shape}")
+        raise ValueError("Invalid initial state tensor shape for run_inference input")
 
-    # Create ensemble batch by repeating initial state
-    # Shape: (E, C, H, W)
-    batch_tensor = initial_state_tensor.repeat(n_ensemble, 1, 1, 1)
-    logger.info(f"Created ensemble batch shape: {batch_tensor.shape}")
+    # Create ensemble batch (E, C, H, W)
+    batch_tensor_4d = initial_state_tensor.repeat(n_ensemble, 1, 1, 1).to(device)
+    logger.info(f"Created ensemble batch (4D): {batch_tensor_4d.shape}")
 
-    # --- Normalization and Perturbation ---
+    # Add the time dimension T = n_history + 1
+    # For n_history=0, T=1. Shape becomes (E, 1, C, H, W)
+    initial_state_5d = batch_tensor_4d.unsqueeze(1)
+    logger.info(f"Prepared initial state for TimeLoop (5D): {initial_state_5d.shape}")
 
-    # +++ DEBUGGING BLOCK +++
-    logger.debug("--- Debugging before normalization ---")
-    logger.debug(f"Type of model_inference object: {type(model_inference)}")
-    # Check if the 'normalize' attribute exists before trying to access it heavily
-    if hasattr(model_inference, "normalize"):
-        normalize_attr = model_inference.normalize
-        logger.debug(f"Type of model_inference.normalize attribute: {type(normalize_attr)}")
-        logger.debug(f"Value of model_inference.normalize attribute: {normalize_attr}")
-        is_callable = callable(normalize_attr)
-        logger.debug(f"Is model_inference.normalize callable? {is_callable}")
-        if not is_callable:
-            logger.error("FATAL: model_inference.normalize is NOT a callable method!")
-            # You might want to inspect the whole object here if needed
-            # logger.debug(f"Full model_inference object attributes: {dir(model_inference)}")
-            raise TypeError(f"Attribute 'normalize' on {type(model_inference)} is not callable (it's a {type(normalize_attr)}).")
-    else:
-        logger.error("FATAL: model_inference object does not have a 'normalize' attribute!")
-        raise AttributeError("model_inference object missing 'normalize' attribute.")
-    logger.debug("--- End Debugging block ---")
-    # +++ END DEBUGGING BLOCK +++
+    # --- Apply Normalization and Perturbation to the INITIAL state ---
+    # Note: The TimeLoop interface assumes it receives the *initial* state
+    # and manages normalization/denormalization internally based on its flags/methods.
+    # However, perturbation needs to be applied *before* starting the loop.
+    # Let's normalize, perturb, and then *denormalize* before passing to the loop,
+    # OR modify the TimeLoop interface if it can handle perturbed normalized input.
+    # Simpler approach: Normalize, perturb, pass the perturbed normalized state.
+    # This requires that the TimeLoop's internal _iterate method correctly handles
+    # starting from an already normalized state. (Our previous edit to _iterate assumes this).
 
-    # Normalize the entire batch first
+    logger.debug("Normalizing initial 5D state...")
     try:
-        logger.debug("Attempting to call model_inference.normalize(batch_tensor)...")
-        # This is the line that previously failed
-        batch_tensor_normalized = model_inference.normalize(batch_tensor)
-        logger.info("Normalization call successful.")  # Log success if it passes
-        logger.debug(f"Normalized batch tensor shape: {batch_tensor_normalized.shape}, dtype: {batch_tensor_normalized.dtype}, device: {batch_tensor_normalized.device}")
-        # Check for NaNs after normalization
-        if torch.isnan(batch_tensor_normalized).any():
-            logger.warning("NaNs detected in normalized batch tensor!")
-    except TypeError as te:  # Catch the specific error we saw
-        logger.error(f"Caught TypeError during normalization call: {te}", exc_info=True)
-        # Re-iterate the state based on debugging block above if helpful
-        logger.error(f"This confirms 'model_inference.normalize' was not a method. Type was {type(model_inference.normalize)}.")
-        raise  # Re-raise the exception after logging
+        initial_state_norm_5d = model_inference.normalize(initial_state_5d) # Use the added method
+        logger.info("Normalized initial 5D state.")
+        logger.debug(f"Normalized initial state shape: {initial_state_norm_5d.shape}, dtype: {initial_state_norm_5d.dtype}")
     except Exception as e:
-        # Log any other unexpected errors during normalization
-        logger.error(f"An unexpected error occurred during normalization: {e}", exc_info=True)
+        logger.error(f"Error during initial state normalization: {e}", exc_info=True)
         raise
 
-    # --- Perturbation (Rest of the function remains the same) ---
-    batch_tensor_perturbed_normalized = batch_tensor_normalized.clone()  # Start with normalized state
+    initial_state_perturbed_norm_5d = initial_state_norm_5d.clone()
 
-    if config["noise_amplitude"] > 0 and n_ensemble > 1:
-        pert_strategy = config["perturbation_strategy"]
-        noise_amp = config["noise_amplitude"]
-        logger.info(f"Applying perturbation noise (amplitude: {noise_amp:.4f}). Strategy: {pert_strategy}")
-
-        # Placeholder: Gaussian noise applied to normalized data
+    if noise_amp > 0 and n_ensemble > 1:
+        logger.info(f"Applying perturbation noise to initial normalized state (amplitude: {noise_amp:.4f}, strategy: {pert_strategy})")
         if pert_strategy != "correlated":
-            logger.warning(f"Perturbation strategy '{pert_strategy}' requested, but using simple Gaussian noise placeholder.")
+             logger.warning(f"Perturbation strategy '{pert_strategy}' requested, but using simple Gaussian noise placeholder.")
 
-        noise = torch.randn_like(batch_tensor_normalized) * noise_amp
-        logger.debug(f"Generated noise tensor, shape: {noise.shape}, std before scaling: {torch.std(torch.randn_like(batch_tensor_normalized)):.4f}, after: {torch.std(noise):.4f}")
+        noise = torch.randn_like(initial_state_perturbed_norm_5d) * noise_amp
+        logger.debug(f"Generated noise tensor, shape: {noise.shape}, std: {torch.std(noise):.4f}")
 
         if n_ensemble > 1:
-            noise[0, :, :, :] = 0
-            logger.debug("Set noise for ensemble member 0 to zero.")
+           noise[0, :, :, :, :] = 0 # Ensure member 0 is deterministic
+           logger.debug("Set noise for ensemble member 0 to zero.")
 
-        batch_tensor_perturbed_normalized += noise
-        logger.info("Applied placeholder Gaussian noise to normalized state (excluding member 0).")
-        if torch.isnan(batch_tensor_perturbed_normalized).any():
-            logger.warning("NaNs detected after adding noise!")
-
+        initial_state_perturbed_norm_5d += noise
+        logger.info("Applied placeholder Gaussian noise to normalized initial state.")
+        if torch.isnan(initial_state_perturbed_norm_5d).any():
+            logger.warning("NaNs detected after adding noise to initial state!")
     else:
-        logger.info("No perturbation noise applied (amplitude is 0 or ensemble size is 1).")
+        logger.info("No perturbation noise applied to initial state.")
 
-    # --- Autoregressive Loop ---
-    output_tensors_denorm = []  # Store denormalized outputs on CPU
-    current_state_normalized = batch_tensor_perturbed_normalized  # Shape (E, C, H, W)
-    logger.debug(f"Initial state for loop shape: {current_state_normalized.shape}, dtype: {current_state_normalized.dtype}, device: {current_state_normalized.device}")
 
-    # Store initial state (t=0) - denormalized
-    try:
-        logger.debug("Denormalizing initial state (t=0) for storage.")
-        # +++ Add similar debugging for denormalize if needed +++
-        if not hasattr(model_inference, "denormalize") or not callable(model_inference.denormalize):
-            logger.error(f"model_inference.denormalize is missing or not callable! Type: {type(getattr(model_inference, 'denormalize', None))}")
-            raise AttributeError("Cannot call denormalize method.")
-        # +++ End denormalize debug +++
-        initial_state_denormalized = model_inference.denormalize(current_state_normalized)
-        if 0 % output_freq == 0:
-            logger.debug("Saving initial state (t=0).")
-            output_tensors_denorm.append(initial_state_denormalized.cpu())
-        logger.debug(f"Stored initial state shape (on CPU): {output_tensors_denorm[0].shape}")
-    except Exception as e:
-        logger.error(f"Error during initial state denormalization: {e}", exc_info=True)
-        raise
-
-    logger.info(f"Model time step: {model_inference.time_step}")
-    logger.info(f"Autoregressive loop starting for {simulation_length} steps...")
-
+    # --- Run the TimeLoop Iterator ---
+    output_tensors_denorm = []
     inference_times = []
-    with torch.no_grad():  # Essential for inference
-        for step in range(simulation_length):
-            step_num = step + 1
-            start_time = time.time()
-            logger.debug(f"Step {step_num}/{simulation_length} - Input shape: {current_state_normalized.shape}, dtype: {current_state_normalized.dtype}")
+    logger.info(f"Initializing TimeLoop iterator starting from {initial_time_dt.isoformat()}")
 
-            if torch.isnan(current_state_normalized).any():
-                logger.error(f"NaN detected in input state before step {step_num}. Aborting.")
-                return None
+    try:
+        # Initialize the iterator. Pass the perturbed NORMALIZED state.
+        # The `_iterate` method we modified assumes normalized input.
+        iterator = model_inference(time=initial_time_dt, x=initial_state_perturbed_norm_5d)
 
-            # Model prediction (expects normalized input, outputs normalized prediction)
-            try:
-                # Ensure model_inference itself is callable (the __call__ method)
-                if not callable(model_inference):
-                    logger.error(f"model_inference object itself is not callable! Type: {type(model_inference)}")
-                    raise TypeError("model_inference is not callable.")
+        # The iterator yields the state *at* the given time step (including t=0)
+        # We want `simulation_length` steps *after* t=0.
+        # So, we need to iterate `simulation_length + 1` times.
+        num_steps_to_iterate = simulation_length + 1
+        logger.info(f"Iterating {num_steps_to_iterate} times over the TimeLoop iterator...")
 
-                next_state_normalized = model_inference(current_state_normalized)  # Calls __call__ -> forward
-                logger.debug(f"Step {step_num}/{simulation_length} - Raw model output shape: {next_state_normalized.shape}, dtype: {next_state_normalized.dtype}")
+        step_counter = 0 # Steps taken by the model (0, 1, 2, ...)
+        saved_outputs = 0
 
-                if torch.isnan(next_state_normalized).any() or torch.isinf(next_state_normalized).any():
-                    logger.error(f"NaN or Inf detected in model output at step {step_num}. Aborting.")
-                    return None  # Indicate failure
+        start_time = time.time()
+        for i, (time_out, data_denorm, restart_state) in enumerate(iterator):
+            current_time = time.time()
+            step_time = current_time - start_time
+            start_time = current_time # Reset timer for next step
 
-            except Exception as e:
-                logger.error(f"Error during model forward pass at step {step_num}: {e}", exc_info=True)
-                return None  # Indicate failure
+            logger.debug(f"Iterator step {i}: Time = {time_out.isoformat()}, Output shape = {data_denorm.shape}, Step time = {step_time:.3f}s")
 
-            # Denormalize for saving
-            try:
-                # +++ Add similar debugging for denormalize if needed +++
-                if not hasattr(model_inference, "denormalize") or not callable(model_inference.denormalize):
-                    logger.error(f"model_inference.denormalize is missing or not callable! Type: {type(getattr(model_inference, 'denormalize', None))}")
-                    raise AttributeError("Cannot call denormalize method.")
-                # +++ End denormalize debug +++
-                output_denormalized = model_inference.denormalize(next_state_normalized)
-                if torch.isnan(output_denormalized).any():
-                    logger.warning(f"NaNs detected in denormalized output at step {step_num}!")
+            # Store output based on frequency (relative to model steps taken)
+            # Step 0 = initial state
+            if step_counter % output_freq == 0:
+                logger.debug(f"Saving output for model step {step_counter} (iterator step {i})")
+                output_tensors_denorm.append(data_denorm.cpu()) # Store denormalized output on CPU
+                saved_outputs += 1
 
-            except Exception as e:
-                logger.error(f"Error during denormalization at step {step_num}: {e}", exc_info=True)
-                output_denormalized = next_state_normalized.clone()
-                logger.warning(f"Saving normalized output for step {step_num} due to denormalization error.")
+            # Check if we have enough steps
+            if i >= simulation_length: # Iterated simulation_length+1 times (0 to simulation_length)
+                logger.info(f"Reached target simulation length ({simulation_length} steps after t=0).")
+                break
 
-            # Store output based on frequency
-            if step_num % output_freq == 0:
-                logger.debug(f"Saving output for step {step_num}")
-                output_tensors_denorm.append(output_denormalized.cpu())
-
-            # Update state for next iteration
-            current_state_normalized = next_state_normalized
-
-            end_time = time.time()
-            step_time = end_time - start_time
+            step_counter += 1 # Increment model step counter *after* processing the output for that step
             inference_times.append(step_time)
-            logger.debug(f"Step {step_num} completed in {step_time:.3f} seconds.")
+
+        logger.info(f"Finished iterating. Collected {len(output_tensors_denorm)} output tensors.")
+        if step_counter < simulation_length:
+             logger.warning(f"Iterator stopped early after {step_counter} model steps, expected {simulation_length}.")
+
+    except Exception as e:
+        logger.error(f"Error occurred while iterating TimeLoop: {e}", exc_info=True)
+        return None # Indicate failure
 
     avg_inference_time = np.mean(inference_times) if inference_times else 0
-    logger.info(f"Autoregressive loop finished. Average step time: {avg_inference_time:.3f} seconds.")
+    logger.info(f"TimeLoop iteration finished. Average step time: {avg_inference_time:.3f} seconds.")
 
-    # Combine outputs
+    # --- Combine outputs ---
     if not output_tensors_denorm:
-        logger.warning("No output tensors were saved!")
+        logger.warning("No output tensors were collected!")
         return None
 
     try:
-        logger.debug(f"Stacking {len(output_tensors_denorm)} output tensors...")
-        final_output_tensor = torch.stack(output_tensors_denorm, dim=1)  # Shape: (E, T_out, C, H, W)
+        logger.debug(f"Stacking {len(output_tensors_denorm)} collected output tensors...")
+        # Each tensor in output_tensors_denorm should be (E, C, H, W)
+        # We stack along dim=1 to create the time dimension T_out
+        final_output_tensor = torch.stack(output_tensors_denorm, dim=1) # Shape: (E, T_out, C, H, W)
         logger.info(f"Final aggregated output tensor shape: {final_output_tensor.shape}")
         if torch.isnan(final_output_tensor).any():
-            logger.warning("NaNs detected in the final aggregated output tensor!")
+             logger.warning("NaNs detected in the final aggregated output tensor!")
     except Exception as e:
         logger.error(f"Failed to stack output tensors: {e}", exc_info=True)
         return None
 
     return final_output_tensor
+
+
+
+
+
+
+
+
+
+"""
+
+xplanation and Usage Notes:
+
+    Modular Design:
+
+        The core logic is now centered around iterating the TimeLoop.
+
+        Normalization and perturbation happen before the loop starts.
+
+        Output handling (intermediate saving or full collection) is clearly separated.
+
+        A dedicated save_output_steps function handles the specialized saving logic.
+
+    Ensemble Creation:
+
+        Ensembles are created for each IC at the beginning of run_inference using initial_state_tensor.repeat(n_ensemble, ...).
+
+        Perturbation (noise) is added to this ensemble batch (excluding member 0).
+
+        The TimeLoop processes this entire ensemble batch in parallel on the GPU.
+
+    Simulation Length:
+
+        Controlled by config['simulation_length']. This is the number of steps after the initial time (t=0).
+
+        The TimeLoop iterator is run simulation_length + 1 times.
+
+        How deep can you go? This depends on:
+
+            Model Stability: Numerical errors accumulate. Models might become unstable after a certain number of steps (days/weeks). FCNv2 is generally stable for medium-range forecasts (e.g., 10-15 days, which is 40-60 steps). Longer S2S forecasts might show drift.
+
+            Compute Time: Each step takes time.
+
+            Memory (if collecting full history): Storing the entire history uses E * T_out * C * H * W * 4 bytes.
+
+            Memory (with intermediate saving): Memory usage is dominated by the current state tensor (E, T, C, H, W) on the GPU during the loop, plus the small CPU buffer (buffer_size steps). This is much lower.
+
+    Performance & Memory:
+
+        Using TimeLoop: This is generally efficient as it avoids manual state copying between CPU/GPU within the loop.
+
+        GPU Usage: The model runs on the GPU. The main memory bottleneck during the loop is the current state tensor x inside _iterate, which has shape (E, n_history+1, C, H, W).
+
+        CPU Usage:
+
+            If collecting full history: The list output_tensors_full_history grows, consuming CPU RAM.
+
+            If saving intermediates: The output_history_buffer (deque) holds only buffer_size tensors on the CPU RAM, which is minimal. The main CPU load comes from the save_output_steps function (xarray creation, NetCDF writing).
+
+        Intermediate Saving: Calling save_output_steps inside the loop is the key to minimizing peak CPU RAM usage if the full history is too large. It trades RAM for I/O overhead. collections.deque is efficient for the buffer. Moving data to CPU immediately (data_denorm.cpu()) frees GPU memory faster.
+
+    Variable Subsetting (Lowest Memory):
+
+        Challenge: FCNv2 (and the Inference wrapper) are built assuming all 73 input channels are needed to predict all 73 output channels at each step. You cannot simply "turn off" calculations for certain variables during the autoregressive loop without fundamentally changing the model or wrapper.
+
+        Post-Processing (Standard): The standard approach is to run the full model and then select/save only the variables you need from the output files using tools like xarray. This doesn't save memory during the run.
+
+        Modifying Inference (Advanced): You could modify the Inference class. In _iterate, after next_state_norm = self.model(...), you could select only the channels needed for the next step's input from next_state_norm before assigning it back to x. However, this assumes the model can actually run with fewer input channels, which is unlikely for FCNv2 without retraining or significant architectural changes. It would likely break the physics/dynamics learned by the model.
+
+        Modifying save_output_steps (Practical): If you only need final output files with fewer variables, you can modify save_output_steps to select specific channels before creating the xarray.DataArray.
+
+              
+        # Inside save_output_steps, after stacking output_tensor
+        if 'variables_to_save' in config:
+            try:
+                var_indices = [channels.index(v) for v in config['variables_to_save']]
+                output_tensor = output_tensor[:, :, var_indices, :, :] # Select channels
+                channels_coord = config['variables_to_save'] # Update coords
+                logger.info(f"Selected {len(channels_coord)} variables for saving.")
+            except ValueError as e:
+                logger.error(f"Invalid variable name in 'variables_to_save': {e}. Saving all variables.")
+                channels_coord = channels # Fallback
+        else:
+            channels_coord = channels # Save all if not specified
+        # ... proceed to create DataArray with potentially subsetted tensor and channels_coord ...
+
+            
+
+        IGNORE_WHEN_COPYING_START
+
+        Use code with caution.Python
+        IGNORE_WHEN_COPYING_END
+
+        This saves disk space and makes subsequent loading faster, but doesn't reduce memory usage during the simulation.
+
+        Conclusion: True memory reduction by only processing needed variables during the loop is generally not feasible with pre-trained monolithic models like FCNv2 without model modification/retraining. Intermediate saving is the best strategy for managing output memory.
+
+    save_output_steps Implementation:
+
+        Takes a dictionary mapping step indices to data tensors.
+
+        Handles assembling these potentially non-contiguous steps into a single xarray object for saving.
+
+        Uses step as the primary coordinate, with time associated.
+
+        Generates a filename including the current_model_step.
+
+How to Use the New Structure:
+
+    Replace run_inference: Update your inference_arco_73_numpy.py with the new run_inference function definition and the save_output_steps helper function.
+
+    Modify main Loop: Ensure the call to run_inference passes the initial_time_dt.
+
+    Configure Saving:
+
+        To save intermediates (e.g., t and t-2):
+
+            Make sure output_dir is correctly set and passed.
+
+            Keep save_func=save_output_steps (the default).
+
+            Set save_steps_config={'steps_to_save': [-2, 0]} (or your desired offsets).
+
+            run_inference will return None. The output files appear in output_dir as the loop progresses.
+
+        To collect full history in memory:
+
+            Pass save_func=None when calling run_inference.
+
+            run_inference will return the full 5D tensor (E, T_out, C, H, W).
+
+            You will need a separate call to a save_output function (like your original one) after run_inference finishes to save this large tensor. Make sure your system has enough RAM.
+
+            Use config['output_frequency'] to control how many steps are stored in the full history tensor (e.g., output_frequency=4 saves every 4th step).
+
+This revised structure provides a robust way to run the inference using the intended TimeLoop pattern and offers flexibility in how you handle the output for memory efficiency.
+
+
+"""
+
+
+
+
+
+
+
+
 
 
 # --- Save Output Function (adapted from main_inference) ---
@@ -459,6 +635,15 @@ def save_output(output_tensor, initial_time, time_step, channels, lat, lon, conf
                 logger.error(f"Failed to remove corrupted file {output_filename}: {oe}")
 
 
+
+
+
+
+
+
+
+
+
 # --- Main Pipeline Function ---
 def main(args):
     """Main pipeline execution function."""
@@ -611,55 +796,79 @@ def main(args):
     }
     logger.info(f"Inference Configuration: {inference_config}")
 
-    # --- Run Inference for each Initial Condition ---
-    # Use the specific output subdirectory passed via args
-    netcdf_output_dir = args.output_path
-    os.makedirs(netcdf_output_dir, exist_ok=True)
-    logger.info(f"NetCDF output files will be saved to: {netcdf_output_dir}")
 
+
+
+
+
+
+
+
+
+    # --- Run Inference for each Initial Condition ---
+    # ... (setup output_dir etc) ...
     num_ics_processed = 0
     num_ics_failed = 0
-
     total_start_time = time.time()
 
-    for i, initial_time in enumerate(ic_timestamps):
-        time_label = initial_time.isoformat() if isinstance(initial_time, datetime.datetime) else f"Index_{initial_time}"
+    for i, initial_time in enumerate(ic_timestamps): # initial_time is now datetime or index
+        # Ensure initial_time is a datetime object
+        if not isinstance(initial_time, datetime.datetime):
+             logger.error(f"IC timestamp for index {i} is not a datetime object ({type(initial_time)}). Cannot proceed with this IC.")
+             num_ics_failed += 1
+             continue # Skip to the next IC
+        # Ensure timezone-aware (UTC is standard for weather data)
+        if initial_time.tzinfo is None or initial_time.tzinfo.utcoffset(initial_time) is None:
+             logger.warning(f"Initial time {initial_time.isoformat()} is timezone naive. Assuming UTC.")
+             initial_time = initial_time.replace(tzinfo=pytz.utc) # Or use datetime.timezone.utc if pytz isn't used
+
+        time_label = initial_time.isoformat()
         logger.info(f"--- Processing Initial Condition {i+1}/{num_ics}: {time_label} ---")
 
-        # Select the i-th initial condition from the loaded NumPy array
-        ic_data_np = initial_conditions_np[i]  # Shape: (C, H, W)
-
-        # Convert to PyTorch Tensor, add batch dimension
+        # Select the i-th initial condition (1, C, H, W) - already done before loop
+        ic_data_np = initial_conditions_np[i]
         try:
-            # Add batch dimension: (1, C, H, W), ensure float32
             initial_state_tensor = torch.from_numpy(ic_data_np).unsqueeze(0).float()
-            logger.debug(f"Prepared initial state tensor from NumPy slice, shape: {initial_state_tensor.shape}, dtype: {initial_state_tensor.dtype}")
+            logger.debug(f"Prepared initial state tensor (1, C, H, W): {initial_state_tensor.shape}")
         except Exception as e:
             logger.error(f"Failed to convert NumPy slice {i} to tensor: {e}", exc_info=True)
             num_ics_failed += 1
-            continue  # Skip to the next IC
+            continue
 
-        # Run the forecast
+        # Run the forecast using the NEW run_inference signature
         start_run = time.time()
-        output_tensor = run_inference(model_inference=model_inference, initial_state_tensor=initial_state_tensor, config=inference_config, logger=logger)  # Pass the logger object
+        output_tensor = run_inference(
+            model_inference=model_inference,
+            initial_state_tensor=initial_state_tensor, # Pass the (1, C, H, W) tensor
+            initial_time_dt=initial_time,            # <-- Pass the datetime object
+            config=inference_config,
+            logger=logger
+        )
         end_run = time.time()
 
+        # ... (rest of the loop: saving output, clearing cache, etc.) ...
         if output_tensor is not None:
             logger.info(f"Inference run for IC {time_label} completed in {end_run - start_run:.2f} seconds.")
-            # Save the output
-            save_output(output_tensor=output_tensor, initial_time=initial_time if isinstance(initial_time, datetime.datetime) else base_date, time_step=model_inference.time_step, channels=model_inference.in_channel_names, lat=model_inference.grid.lat, lon=model_inference.grid.lon, config=inference_config, output_dir=netcdf_output_dir, logger=logger)  # Use base_date if only index available  # Get timedelta from model  # Use model's channel names  # Get lat/lon from model grid  # Save to the specific NetCDF dir  # Pass the logger object
+            save_output(
+                output_tensor=output_tensor,
+                initial_time=initial_time, # Pass datetime for saving
+                time_step=model_inference.time_step,
+                channels=model_inference.in_channel_names,
+                lat=model_inference.grid.lat,
+                lon=model_inference.grid.lon,
+                config=inference_config,
+                output_dir=netcdf_output_dir,
+                logger=logger
+            )
             num_ics_processed += 1
         else:
             logger.error(f"Inference failed for IC {time_label}. No output generated.")
             num_ics_failed += 1
 
-        # Optional: Clear CUDA cache if memory is an issue between runs
-        if device.type == "cuda":
-            torch.cuda.empty_cache()
-            logger.debug("Cleared CUDA cache.")
+        if device.type == 'cuda':
+             torch.cuda.empty_cache()
+             logger.debug("Cleared CUDA cache.")
 
-    total_end_time = time.time()
-    logger.info(f"--- Total processing time for {num_ics} ICs: {total_end_time - total_start_time:.2f} seconds ---")
 
     # --- Final Summary ---
     logger.info("--- Inference Loop Finished ---")
@@ -671,6 +880,22 @@ def main(args):
     logger.info("========================================================")
     logger.info(" FCNv2-SM Inference Pipeline Finished ")
     logger.info("========================================================")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":
