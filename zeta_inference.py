@@ -15,6 +15,14 @@ from dateutil.relativedelta import relativedelta
 import dotenv
 import pytz
 
+import xarray as xr
+import os
+import time
+import logging # Assume logger is passed correctly
+import pytz # Assume pytz is imported elsewhere
+from typing import List, Dict, Optional, Callable, Any, Tuple # Type hints
+import gc # Import garbage collector interface
+
 # Need these imports if not already present at the top
 import collections
 import pickle
@@ -581,6 +589,128 @@ def run_inference(
 
 
 
+"""
+
+
+    Smaller Chunks: The logic is broken into:
+
+        _prepare_coordinates: Handles channel, time, lat, lon setup.
+
+        _convert_to_numpy: Focuses solely on the torch to numpy conversion.
+
+        _create_xarray_dataset: Manages xr.DataArray and xr.Dataset creation, including intermediate memory cleanup.
+
+        _generate_output_filename: Creates the descriptive filename.
+
+        _write_netcdf: Handles the actual file writing and compression.
+
+        save_full_output: Orchestrates the calls to the helper functions.
+
+    Detailed Comments & Logging: Each helper function and major step within them has comments. Logging is added at DEBUG and INFO levels to trace the process, including shapes, dtypes, timings, and potential warnings/errors.
+
+    Filename: _generate_output_filename calculates the end_time based on initial_time, simulation_length, and time_step. Both start and end times (formatted as dd_Month_YYYY_HH_MM) are included in the filename, along with model name, ensemble size, and simulation length.
+
+    Robustness & OOM Prevention (CPU):
+
+        Checks for None return values from helpers to abort early on failure.
+
+        Uses try...except blocks extensively.
+
+        Explicit Memory Management: del is used immediately after large objects (input PyTorch tensor, intermediate NumPy array, intermediate DataArray) are no longer needed for the next step. gc.collect() is called to encourage Python to reclaim the memory, minimizing peak CPU RAM.
+
+        The function still relies on the input output_tensor being on the CPU, as checked at the start.
+
+    NetCDF Output: The final output is saved as a single NetCDF file containing all simulation steps present in the input output_tensor. The structure remains (ensemble, time, channel, lat, lon) or similar after to_dataset.
+
+    Variable Sizes: Logging includes the shape and estimated size (nbytes) of the intermediate DataArray, giving an idea of the memory footprint before it's converted to a Dataset and potentially split into variables. The final file size is also logged.
+
+This refactored version is more readable, easier to debug, and incorporates best practices for handling large data and potential memory constraints during the saving process on the CPU.
+
+"""
+
+
+
+def _prepare_coordinates(
+    output_tensor_shape: Tuple[int, int, int, int, int],
+    channels_list: List[str],
+    initial_time: datetime.datetime,
+    time_step: datetime.timedelta,
+    output_freq: int,
+    lat_in: np.ndarray | torch.Tensor,
+    lon_in: np.ndarray | torch.Tensor,
+    logger: logging.Logger,
+) -> Tuple[Optional[np.ndarray], Optional[str], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Prepares and validates coordinates (channel, time, lat, lon) for the xarray dataset.
+
+    Returns:
+        Tuple containing:
+        - channels_coord (np.ndarray or List[str]): Coordinate for channels.
+        - channel_dim_name (str): Name for the channel dimension.
+        - time_coords_np (np.ndarray): Time coordinates as datetime64[ns].
+        - lat_np (np.ndarray): Latitude coordinates.
+        - lon_np (np.ndarray): Longitude coordinates.
+        Returns None for all if a critical error occurs.
+    """
+    logger.debug("Preparing coordinates...")
+    n_ensemble, n_time_out, n_channels, n_lat, n_lon = output_tensor_shape
+
+    # 1. Channel Coordinates
+    logger.debug(f"  Processing channel coordinates. Expected based on list: {len(channels_list)}. Found in tensor: {n_channels}")
+    if n_channels != len(channels_list):
+        logger.error(f"Mismatch between channels in tensor ({n_channels}) and provided channel names ({len(channels_list)}). Using generic indices.")
+        channels_coord = np.arange(n_channels).astype(str) # Use string indices for clarity
+        channel_dim_name = "channel_idx"
+    else:
+        channels_coord = channels_list
+        channel_dim_name = "channel"
+    logger.debug(f"  Using channel dimension name '{channel_dim_name}' with coordinates: {channels_coord[:5]}...") # Log first few
+
+    # 2. Time Coordinates
+    logger.debug(f"  Processing time coordinates. Expected steps: {n_time_out}. Initial time: {initial_time.isoformat()}")
+    time_coords_np = None
+    try:
+        # Ensure time_step is timedelta
+        if not isinstance(time_step, datetime.timedelta):
+            logger.warning(f"Model time_step is not a timedelta ({type(time_step)}), attempting conversion assuming hours.")
+            try:
+                actual_time_step = datetime.timedelta(hours=float(time_step))
+            except ValueError:
+                logger.error(f"Cannot interpret time_step '{time_step}' as hours.")
+                raise TypeError("Invalid time_step type for time coordinate calculation.")
+        else:
+            actual_time_step = time_step
+        logger.debug(f"  Using time step: {actual_time_step} and output frequency: {output_freq}")
+
+        time_coords_py = [initial_time + i * output_freq * actual_time_step for i in range(n_time_out)]
+        time_coords_np = np.array(time_coords_py, dtype='datetime64[ns]') # Convert to numpy datetime64
+        logger.debug(f"  Generated {len(time_coords_np)} time coordinates (dtype: {time_coords_np.dtype}). First: {time_coords_np[0]}, Last: {time_coords_np[-1]}")
+
+        if len(time_coords_np) != n_time_out:
+             logger.warning(f"Generated {len(time_coords_np)} numpy time coordinates, expected {n_time_out}. Using anyway.")
+             # Fallback not strictly needed if array creation worked, but could use indices:
+             # time_coords_np = np.arange(n_time_out).astype('int64')
+
+    except Exception as e:
+        logger.error(f"Failed to create or convert time coordinates: {e}", exc_info=True)
+        logger.warning("Using integer indices as fallback time coordinates.")
+        time_coords_np = np.arange(n_time_out).astype('int64') # Fallback
+
+    # 3. Spatial Coordinates (Latitude and Longitude)
+    logger.debug("  Processing spatial coordinates (lat, lon)...")
+    try:
+        lat_np = np.asarray(lat_in.cpu().numpy() if isinstance(lat_in, torch.Tensor) else lat_in)
+        lon_np = np.asarray(lon_in.cpu().numpy() if isinstance(lon_in, torch.Tensor) else lon_in)
+        if lat_np.ndim != 1 or lon_np.ndim != 1:
+            raise ValueError(f"Lat/Lon must be 1D arrays, got shapes {lat_np.shape} and {lon_np.shape}")
+        if len(lat_np) != n_lat or len(lon_np) != n_lon:
+            raise ValueError(f"Lat/Lon coordinate size mismatch. Tensor: ({n_lat}, {n_lon}), Coords: ({len(lat_np)}, {len(lon_np)})")
+        logger.debug(f"  Validated Lat ({lat_np.shape}) and Lon ({lon_np.shape}) coordinates.")
+    except Exception as e:
+        logger.error(f"Failed to validate or convert spatial coordinates: {e}", exc_info=True)
+        return None, None, None, None, None # Indicate critical failure
+
+    return channels_coord, channel_dim_name, time_coords_np, lat_np, lon_np
 
 
 
@@ -592,7 +722,190 @@ def run_inference(
 
 
 
-# --- Function to Save Full Output History (save_full_output) ---
+def _convert_to_numpy(output_tensor_cpu: torch.Tensor, logger: logging.Logger) -> Optional[np.ndarray]:
+    """Converts the CPU tensor to a NumPy array, logging time and checking NaNs."""
+    logger.info("Converting full output tensor (CPU) to NumPy array...")
+    logger.debug(f"Input tensor details: shape={output_tensor_cpu.shape}, dtype={output_tensor_cpu.dtype}")
+    conversion_start = time.time()
+    output_tensor_np = None
+    try:
+        # Check NaNs before potentially expensive conversion
+        if torch.isnan(output_tensor_cpu).any():
+           nan_count_torch = torch.count_nonzero(torch.isnan(output_tensor_cpu))
+           logger.warning(f"NaNs detected in PyTorch tensor ({nan_count_torch} occurrences) before NumPy conversion!")
+
+        output_tensor_np = output_tensor_cpu.numpy()
+        conversion_end = time.time()
+        logger.info(f"Converted tensor to NumPy array (shape: {output_tensor_np.shape}, dtype: {output_tensor_np.dtype}) in {conversion_end - conversion_start:.2f}s.")
+
+        # Check NaNs again in NumPy array (might catch different issues or confirm)
+        if np.isnan(output_tensor_np).any():
+            nan_count_np = np.count_nonzero(np.isnan(output_tensor_np))
+            logger.warning(f"NaNs confirmed/found in NumPy output array ({nan_count_np} occurrences).")
+
+        return output_tensor_np
+
+    except Exception as e:
+         logger.error(f"Failed to convert output tensor to NumPy array: {e}", exc_info=True)
+         return None # Indicate failure
+
+
+
+
+
+
+
+
+
+def _create_xarray_dataset(
+    output_tensor_np: np.ndarray,
+    coords: Dict[str, Any],
+    dims: List[str],
+    attrs: Dict[str, Any],
+    channel_dim_name: str,
+    logger: logging.Logger,
+) -> Optional[xr.Dataset]:
+    """Creates the xarray DataArray and converts it to a Dataset."""
+    logger.info("Creating xarray objects...")
+    da_creation_start = time.time()
+    forecast_da = None
+    forecast_ds = None
+
+    try:
+        logger.debug("  Creating DataArray...")
+        forecast_da = xr.DataArray(
+            output_tensor_np,
+            coords=coords,
+            dims=dims,
+            name='forecast',
+            attrs=attrs
+        )
+        da_creation_end = time.time()
+        logger.info(f"  Created DataArray in {da_creation_end - da_creation_start:.2f}s. Size: ~{forecast_da.nbytes / (1024**3):.2f} GiB")
+
+        # --- Memory Management: Delete NumPy array now ---
+        logger.debug("  Deleting NumPy array to free memory before Dataset creation...")
+        del output_tensor_np
+        gc.collect() # Suggest garbage collection
+        # --- End Memory Management ---
+
+        logger.debug(f"  Converting DataArray to Dataset using dimension '{channel_dim_name}'...")
+        ds_creation_start = time.time()
+        forecast_ds = forecast_da.to_dataset(dim=channel_dim_name)
+        ds_creation_end = time.time()
+        logger.info(f"  Converted to Dataset in {ds_creation_end - ds_creation_start:.2f}s.")
+
+        # --- Memory Management: Delete DataArray now ---
+        logger.debug("  Deleting intermediate DataArray...")
+        del forecast_da
+        gc.collect() # Suggest garbage collection
+        # --- End Memory Management ---
+
+        logger.info("xarray Dataset created successfully.")
+        return forecast_ds
+
+    except Exception as e:
+        logger.error(f"Failed during xarray DataArray/Dataset creation: {e}", exc_info=True)
+        # Clean up potentially created objects if error occurred mid-way
+        if forecast_da is not None: del forecast_da
+        if forecast_ds is not None: del forecast_ds
+        # output_tensor_np might have already been deleted, or deletion failed
+        gc.collect()
+        return None
+
+
+
+
+
+
+
+
+
+
+def _generate_output_filename(
+    output_dir: str,
+    model_name: str,
+    n_ensemble: int,
+    simulation_length: int,
+    initial_time: datetime.datetime,
+    end_time: datetime.datetime,
+    logger: logging.Logger,
+) -> str:
+    """Generates the output NetCDF filename including start and end dates."""
+    logger.debug("Generating output filename...")
+    try:
+        # Use requested format: "%d_%B_%Y_%H_%M"
+        start_time_str = initial_time.strftime('%d_%B_%Y_%H_%M')
+        end_time_str = end_time.strftime('%d_%B_%Y_%H_%M')
+        logger.debug(f"  Formatted start time: {start_time_str}, end time: {end_time_str}")
+    except ValueError:
+        logger.warning("Could not format dates with '%d_%B_%Y_%H_%M', using ISO format.")
+        start_time_str = initial_time.strftime('%Y%m%dT%H%M%S')
+        end_time_str = end_time.strftime('%Y%m%dT%H%M%S')
+
+    filename = (
+        f"{model_name}_ens{n_ensemble}_sim{simulation_length}steps_"
+        f"start_{start_time_str}_end_{end_time_str}_FULL.nc"
+    )
+    output_path = os.path.join(output_dir, filename)
+    logger.debug(f"  Generated filename: {output_path}")
+    return output_path
+
+
+
+
+
+
+
+
+def _write_netcdf(
+    dataset: xr.Dataset,
+    output_filename: str,
+    logger: logging.Logger,
+) -> bool:
+    """Writes the xarray Dataset to a NetCDF file with compression."""
+    logger.info(f"Saving dataset to NetCDF: {output_filename}")
+    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+
+    # Define encoding for compression
+    encoding = {var: {'zlib': True, 'complevel': 5, '_FillValue': np.float32(-9999.0)} for var in dataset.data_vars}
+    logger.debug(f"Using encoding: {encoding}")
+
+    save_start_time = time.time()
+    try:
+        dataset.to_netcdf(output_filename, encoding=encoding, engine='netcdf4')
+        save_end_time = time.time()
+        write_duration = save_end_time - save_start_time
+        try:
+            file_size_mb = os.path.getsize(output_filename) / (1024 * 1024)
+            logger.info(f"NetCDF write complete. Time: {write_duration:.2f}s. File size: {file_size_mb:.2f} MB")
+        except OSError as e:
+            logger.error(f"Could not get file size for {output_filename}: {e}")
+            logger.info(f"NetCDF write complete. Time: {write_duration:.2f}s.")
+        return True # Indicate success
+
+    except Exception as e:
+        logger.error(f"Failed to write NetCDF file: {e}", exc_info=True)
+        # Attempt to remove potentially corrupted file
+        if os.path.exists(output_filename):
+            try:
+                os.remove(output_filename)
+                logger.warning(f"Removed potentially corrupted file: {output_filename}")
+            except OSError as oe:
+                logger.error(f"Failed to remove corrupted file {output_filename}: {oe}")
+        return False # Indicate failure
+
+
+
+
+
+
+
+
+
+
+
+# --- Refactored Main Saving Function ---
 def save_full_output(
     output_tensor: torch.Tensor, # Expects (E, T_out, C, H, W) on CPU
     initial_time: datetime.datetime,
@@ -606,236 +919,167 @@ def save_full_output(
 ):
     """
     Saves the full forecast history tensor (expected on CPU) to a single NetCDF file.
-
-    Handles time coordinate conversion to numpy.datetime64 for xarray compatibility.
-    Includes explicit deletion of large intermediate objects to potentially aid
-    garbage collection and reduce peak CPU memory usage during saving.
+    Breaks down the process into coordinate preparation, data conversion, xarray
+    object creation, filename generation, and NetCDF writing, with focus on
+    CPU memory management and robustness.
 
     Args:
-        output_tensor: The tensor containing the full forecast history
-                       (Shape: E, T_out, C, H, W), MUST be on CPU.
-        initial_time: Datetime object for the initial condition (t=0), timezone-aware.
-        time_step: Timedelta object representing the model's time step duration.
-        channels: List of channel names corresponding to dimension C.
-        lat: Latitude coordinates (1D numpy array).
-        lon: Longitude coordinates (1D numpy array).
-        config: The main inference configuration dictionary.
-        output_dir: Directory to save the NetCDF file.
-        logger: Logger object.
+        (Args remain the same as before)
     """
     if output_tensor is None:
         logger.error("Cannot save full output, tensor is None.")
         return
     if output_tensor.is_cuda:
         logger.error("save_full_output expects output_tensor on CPU, but it's on GPU. Aborting save.")
-        # Or move it:
-        # logger.warning("output_tensor provided to save_full_output is on GPU. Moving to CPU.")
-        # output_tensor = output_tensor.cpu()
-        return # Safer to abort if it wasn't moved earlier
+        return
 
     proc_start_time = time.time()
-    logger.info("Preparing full forecast history for saving...")
+    logger.info("--- Starting Full Forecast Save Process ---")
+    logger.info(f"Input tensor: shape={output_tensor.shape}, dtype={output_tensor.dtype}, device={output_tensor.device}")
+
+    forecast_ds = None # Initialize dataset variable for cleanup
+    output_tensor_np = None # Initialize numpy variable for cleanup
 
     try:
-        # --- Basic Properties ---
+        # --- 1. Extract Metadata & Basic Properties ---
+        logger.debug("Step 1: Extracting metadata...")
         n_ensemble, n_time_out, n_channels, n_lat, n_lon = output_tensor.shape
         output_freq_for_coords = config.get("output_frequency", 1)
         model_name = config.get("weather_model", "unknown_model")
-        logger.debug(f"Full output tensor shape: {output_tensor.shape}, dtype: {output_tensor.dtype}, device: {output_tensor.device}")
+        simulation_length = config.get("simulation_length", -1) # Get sim length for filename
+        logger.debug(f"  Metadata: Ens={n_ensemble}, TimeSteps={n_time_out}, Channels={n_channels}, Lat={n_lat}, Lon={n_lon}")
+        logger.debug(f"  Config: OutputFreq={output_freq_for_coords}, ModelName={model_name}, SimLength={simulation_length}")
 
-        # --- Channel Handling ---
-        if n_channels != len(channels):
-            logger.error(f"Mismatch channels in full tensor ({n_channels}) vs names ({len(channels)}). Saving with generic indices.")
-            channels_coord = np.arange(n_channels)
-            channel_dim_name = "channel_idx"
+
+
+
+
+        # --- 2. Prepare Coordinates ---
+        logger.debug("Step 2: Preparing coordinates...")
+        channels_coord, channel_dim_name, time_coords_np, lat_np, lon_np = _prepare_coordinates(
+            output_tensor.shape, channels, initial_time, time_step, output_freq_for_coords, lat, lon, logger
+        )
+        if time_coords_np is None or lat_np is None or lon_np is None:
+             logger.error("Coordinate preparation failed. Aborting save.")
+             return # Critical failure if coordinates are bad
+
+
+
+
+
+
+        # --- 3. Convert Data to NumPy ---
+        logger.debug("Step 3: Converting data tensor to NumPy array...")
+        output_tensor_np = _convert_to_numpy(output_tensor, logger)
+        if output_tensor_np is None:
+             logger.error("Tensor to NumPy conversion failed. Aborting save.")
+             return
+
+        # --- Memory Management: Delete original PyTorch tensor ---
+        logger.debug("  Deleting original PyTorch tensor from memory...")
+        del output_tensor
+        gc.collect()
+        # --- End Memory Management ---
+
+
+
+
+
+        # --- 4. Create xarray Dataset ---
+        logger.debug("Step 4: Creating xarray Dataset...")
+        coords_dict = {
+            'ensemble': np.arange(n_ensemble),
+            'time': time_coords_np,
+            channel_dim_name: channels_coord,
+            'lat': lat_np,
+            'lon': lon_np,
+        }
+        dims_list = ['ensemble', 'time', channel_dim_name, 'lat', 'lon']
+        # Calculate end time for attributes
+        try:
+             if not isinstance(time_step, datetime.timedelta): # Recalculate actual_time_step if needed
+                  actual_time_step = datetime.timedelta(hours=float(time_step))
+             else: actual_time_step = time_step
+             end_time_calc = initial_time + simulation_length * actual_time_step
+        except Exception:
+             end_time_calc = None # Handle potential errors
+
+        attrs_dict = {
+            'description': f"{model_name} full ensemble forecast output",
+            'model': model_name,
+            'simulation_length_steps': simulation_length,
+            'output_frequency_stored': output_freq_for_coords,
+            'ensemble_members': n_ensemble,
+            'initial_condition_time': initial_time.isoformat(),
+            'forecast_end_time': end_time_calc.isoformat() if end_time_calc else "N/A",
+            'time_step_seconds': actual_time_step.total_seconds() if isinstance(actual_time_step, datetime.timedelta) else 'unknown',
+            'noise_amplitude': config.get("noise_amplitude", 0.0),
+            'perturbation_strategy': config.get("perturbation_strategy", "N/A"),
+            'creation_date': datetime.datetime.now(pytz.utc).isoformat(),
+            'pytorch_version': torch.__version__,
+            'numpy_version': np.__version__,
+            'xarray_version': xr.__version__,
+        }
+        forecast_ds = _create_xarray_dataset(
+            output_tensor_np, coords_dict, dims_list, attrs_dict, channel_dim_name, logger
+        )
+        # output_tensor_np is deleted inside _create_xarray_dataset
+        if forecast_ds is None:
+             logger.error("xarray Dataset creation failed. Aborting save.")
+             return
+
+
+
+
+
+
+        # --- 5. Generate Filename ---
+        logger.debug("Step 5: Generating output filename...")
+        if end_time_calc is None:
+             logger.warning("Cannot determine exact end time for filename, using simulation length.")
+             # Use a fallback or simplified naming if end time calculation failed
+             end_time_for_filename = initial_time + datetime.timedelta(days=999) # Placeholder clearly indicating issue
         else:
-            channels_coord = channels
-            channel_dim_name = "channel"
+             end_time_for_filename = end_time_calc
 
-        # --- Create Time Coordinates (Convert to np.datetime64) ---
-        time_coords_np = None # Initialize
-        try:
-            # Ensure time_step is timedelta
-            if not isinstance(time_step, datetime.timedelta):
-                logger.warning(f"Model time_step is not a timedelta ({type(time_step)}), attempting conversion assuming hours.")
-                # Attempt conversion or raise error depending on policy
-                try:
-                     actual_time_step = datetime.timedelta(hours=float(time_step)) # Example conversion
-                except ValueError:
-                     logger.error(f"Cannot interpret time_step '{time_step}' as hours.")
-                     raise TypeError("Invalid time_step type for time coordinate calculation.")
-            else:
-                actual_time_step = time_step
-
-            # Generate list of Python datetime objects
-            time_coords_py = [initial_time + i * output_freq_for_coords * actual_time_step for i in range(n_time_out)]
-
-            # *** Convert to numpy.datetime64 for xarray ***
-            time_coords_np = np.array(time_coords_py, dtype='datetime64[ns]') # Use nanosecond precision standard
-            logger.debug(f"Generated and converted {len(time_coords_np)} time coordinates for full history (dtype: {time_coords_np.dtype}).")
-
-            if len(time_coords_np) != n_time_out:
-                 logger.warning(f"Generated {len(time_coords_np)} numpy time coordinates, but expected {n_time_out}. There might be an issue.")
-                 # Fallback might be less useful now, but kept for robustness
-                 time_coords_np = np.arange(n_time_out).astype('int64') # Use integer index as fallback
-
-        except Exception as e:
-            logger.error(f"Failed to create or convert time coordinates for full history: {e}", exc_info=True)
-            logger.warning("Using integer indices as fallback time coordinates.")
-            time_coords_np = np.arange(n_time_out).astype('int64') # Fallback to simple integer index
-
-        # --- Ensure Lat/Lon are Numpy (already required by type hint, but double-check) ---
-        if isinstance(lat, torch.Tensor) or isinstance(lon, torch.Tensor):
-             logger.warning("Received Lat/Lon as Tensors, expected NumPy arrays. Converting.")
-             lat_np = lat.cpu().numpy() if isinstance(lat, torch.Tensor) else np.asarray(lat)
-             lon_np = lon.cpu().numpy() if isinstance(lon, torch.Tensor) else np.asarray(lon)
-        else:
-             lat_np = np.asarray(lat) # Ensure it's a numpy array
-             lon_np = np.asarray(lon)
-
-        # --- Convert PyTorch Tensor to NumPy array (Major CPU Memory Allocation) ---
-        logger.debug("Converting full output tensor to NumPy array...")
-        conversion_start = time.time()
-        # Check for NaNs before conversion if desired (can be slow)
-        # if torch.isnan(output_tensor).any():
-        #    logger.warning("NaNs detected in PyTorch tensor before NumPy conversion!")
-        try:
-             output_tensor_np = output_tensor.numpy()
-             conversion_end = time.time()
-             logger.info(f"Converted tensor to NumPy array (shape: {output_tensor_np.shape}, dtype: {output_tensor_np.dtype}) in {conversion_end - conversion_start:.2f}s.")
-             # Explicitly delete the large PyTorch tensor IF it's safe to do so
-             # (i.e., it won't be needed again outside this function)
-             # del output_tensor # Uncomment cautiously if memory pressure is extreme
-        except Exception as e:
-             logger.error(f"Failed to convert output tensor to NumPy array: {e}", exc_info=True)
-             return # Cannot proceed without numpy array
-
-        # Check for NaNs in NumPy array (more common check)
-        if np.isnan(output_tensor_np).any():
-            nan_count = np.count_nonzero(np.isnan(output_tensor_np))
-            logger.warning(f"NaNs present in the NumPy output array ({nan_count} occurrences)! Saving may proceed but data is invalid.")
-
-        # --- Create xarray DataArray & Dataset ---
-        logger.debug("Creating xarray DataArray for full history...")
-        da_creation_start = time.time()
-        forecast_da = None # Initialize
-        forecast_ds = None # Initialize
-        try:
-            forecast_da = xr.DataArray(
-                output_tensor_np, # Use the NumPy array
-                coords={
-                    'ensemble': np.arange(n_ensemble),
-                    'time': time_coords_np, # Use numpy datetime64 coords
-                    channel_dim_name: channels_coord,
-                    'lat': lat_np,
-                    'lon': lon_np,
-                },
-                dims=['ensemble', 'time', channel_dim_name, 'lat', 'lon'],
-                name='forecast',
-                attrs={
-                    # (Attributes remain the same as before)
-                    'description': f"{model_name} full ensemble forecast output",
-                    'model': model_name,
-                    'simulation_length_steps': config['simulation_length'],
-                    'output_frequency_stored': output_freq_for_coords,
-                    'ensemble_members': n_ensemble,
-                    'initial_condition_time': initial_time.isoformat(),
-                    'time_step_seconds': actual_time_step.total_seconds() if isinstance(actual_time_step, datetime.timedelta) else 'unknown',
-                    'noise_amplitude': config.get("noise_amplitude", 0.0),
-                    'perturbation_strategy': config.get("perturbation_strategy", "N/A"),
-                    'creation_date': datetime.datetime.now(pytz.utc).isoformat(),
-                    'pytorch_version': torch.__version__,
-                    'numpy_version': np.__version__,
-                    'xarray_version': xr.__version__,
-                }
-            )
-            da_creation_end = time.time()
-            logger.info(f"Created xarray DataArray in {da_creation_end - da_creation_start:.2f}s.")
-
-            # Free NumPy array memory IF DataArray creation was successful
-            # and the numpy array is no longer needed directly
-            logger.debug("Deleting NumPy tensor copy...")
-            del output_tensor_np
-            output_tensor_np = None # Ensure reference is gone
-
-            logger.debug(f"Converting DataArray to Dataset using dimension '{channel_dim_name}'...")
-            ds_creation_start = time.time()
-            forecast_ds = forecast_da.to_dataset(dim=channel_dim_name)
-            ds_creation_end = time.time()
-            logger.info(f"Converted DataArray to Dataset in {ds_creation_end - ds_creation_start:.2f}s.")
-
-            # Free DataArray memory if Dataset conversion was successful
-            logger.debug("Deleting intermediate DataArray...")
-            del forecast_da
-            forecast_da = None # Ensure reference is gone
-
-        except Exception as e:
-            logger.error(f"Failed during xarray DataArray/Dataset creation: {e}", exc_info=True)
-            # Clean up potentially created objects
-            del forecast_da
-            del forecast_ds
-            if 'output_tensor_np' in locals() and output_tensor_np is not None: del output_tensor_np
-            return # Cannot proceed
-
-        # --- Define Filename & Save ---
-        # Use requested format: "%d_%B_%Y_%H_%M"
-        try:
-            ic_time_str = initial_time.strftime('%d_%B_%Y_%H_%M')
-        except ValueError: # Handle potential issues with locale/names if needed
-             logger.warning("Could not format initial time with '%d_%B_%Y_%H_%M', using ISO format.")
-             ic_time_str = initial_time.strftime('%Y%m%dT%H%M%S')
-
-        output_filename = os.path.join(
-            output_dir,
-            f"{model_name}_ens{n_ensemble}_sim{config['simulation_length']}_IC{ic_time_str}_FULL.nc"
+        output_filename = _generate_output_filename(
+             output_dir, model_name, n_ensemble, simulation_length, initial_time, end_time_for_filename, logger
         )
 
-        os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"Saving full forecast history to: {output_filename}")
 
-        # Define encoding for compression
-        encoding = {var: {'zlib': True, 'complevel': 5, '_FillValue': np.float32(-9999.0)} for var in forecast_ds.data_vars} # Use float32 for fillvalue
-        logger.debug(f"Using encoding: {encoding}")
 
-        start_save = time.time()
-        forecast_ds.to_netcdf(output_filename, encoding=encoding, engine='netcdf4')
-        end_save = time.time()
 
-        # --- Final Logging and Cleanup ---
-        try:
-            file_size_mb = os.path.getsize(output_filename) / (1024 * 1024)
-            total_proc_time = time.time() - proc_start_time
-            logger.info(f"Save complete. NetCDF write time: {end_save - start_save:.2f}s. Total function time: {total_proc_time:.2f}s. File size: {file_size_mb:.2f} MB")
-        except OSError as e:
-            logger.error(f"Could not get file size for {output_filename}: {e}")
-            total_proc_time = time.time() - proc_start_time
-            logger.info(f"Save complete. NetCDF write time: {end_save - start_save:.2f}s. Total function time: {total_proc_time:.2f}s.")
+
+        # --- 6. Write to NetCDF ---
+        logger.debug("Step 6: Writing dataset to NetCDF file...")
+        success = _write_netcdf(forecast_ds, output_filename, logger)
+
+        if success:
+            logger.info("--- Full Forecast Save Process Completed Successfully ---")
+        else:
+            logger.error("--- Full Forecast Save Process Failed ---")
 
     except Exception as e:
-        # Log the top-level error
-        logger.error(f"Failed during the save_full_output process: {e}", exc_info=True)
-        # Attempt to remove potentially corrupted file
-        if 'output_filename' in locals() and os.path.exists(output_filename):
-            try:
-                os.remove(output_filename)
-                logger.warning(f"Removed potentially corrupted file: {output_filename}")
-            except OSError as oe:
-                logger.error(f"Failed to remove corrupted file {output_filename}: {oe}")
+        # Log any unexpected errors during the main flow
+        logger.error(f"Unexpected error during save_full_output process: {e}", exc_info=True)
 
     finally:
-        # Explicitly delete large objects created within the function to aid GC
-        logger.debug("Cleaning up large objects in save_full_output...")
-        if 'output_tensor_np' in locals() and output_tensor_np is not None:
-            del output_tensor_np
-        if 'forecast_da' in locals() and forecast_da is not None:
-            del forecast_da
-        if 'forecast_ds' in locals() and forecast_ds is not None:
+        # Final cleanup of the largest remaining object (the Dataset)
+        logger.debug("Final cleanup in save_full_output...")
+        if forecast_ds is not None:
             del forecast_ds
-        # output_tensor is passed in, deleting it here might affect caller
-        # Consider if the caller needs it after this function returns. If not,
-        # delete it in the caller *after* this function returns.
-        logger.debug("Finished cleanup in save_full_output.")
-        
+            forecast_ds = None
+        # output_tensor_np and output_tensor should have been deleted earlier if successful
+        if 'output_tensor_np' in locals() and output_tensor_np is not None:
+            logger.warning("NumPy tensor was not deleted earlier, attempting cleanup now.")
+            del output_tensor_np
+        # The original output_tensor (passed arg) might still exist if early errors happened
+        # We avoid deleting args directly, deletion should happen in the caller (`main`)
+
+        gc.collect() # Suggest final garbage collection
+        total_proc_time = time.time() - proc_start_time
+        logger.info(f"Total time spent in save_full_output function: {total_proc_time:.2f}s")
+        logger.info("--- Exiting Full Forecast Save Process ---")
         
         
 
@@ -1212,7 +1456,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output-path", type=str, default=os.path.join(OUTPUT_DIR, "inference_output"), help="Directory for NetCDF output (and plot subdirs).")
 
     # Inference parameters
-    parser.add_argument("-sim", "--simulation-length", type=int, default=1, help="Number of forecast steps (e.g., 4 steps * 6hr = 24hr).")
+    parser.add_argument("-sim", "--simulation-length", type=int, default=3, help="Number of forecast steps (e.g., 4 steps * 6hr = 24hr).")
     parser.add_argument("-ef", "--output-frequency", type=int, default=1, help="Frequency (steps) to store outputs in 'full' mode.")
     parser.add_argument("-ens", "--ensemble-members", type=int, default=1, help="Number of ensemble members.")
     parser.add_argument("-na", "--noise-amplitude", type=float, default=0.0, help="Perturbation noise amplitude (if ens > 1).")
