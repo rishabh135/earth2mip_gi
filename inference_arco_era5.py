@@ -59,15 +59,30 @@ USERNAME = "gupt1075"
 MODEL_REGISTRY_BASE = f"/scratch/gilbreth/gupt1075/fcnv2/"
 EARTH2MIP_PATH = f"/scratch/gilbreth/gupt1075/fcnv2/earth2mip"
 
+
+
+
+
+
+
 # --- Add earth2mip to Python path ---
 if EARTH2MIP_PATH not in sys.path:
     sys.path.insert(0, EARTH2MIP_PATH)
     print(f"Added {EARTH2MIP_PATH} to Python path.")
 
+
+
+
+
 # --- Environment Setup ---
 os.environ["WORLD_SIZE"] = "1"
 os.environ["MODEL_REGISTRY"] = MODEL_REGISTRY_BASE
 print(f"Set MODEL_REGISTRY environment variable to: {MODEL_REGISTRY_BASE}")
+
+
+
+
+
 
 # --- Logging Setup ---
 def setup_logging(log_dir, log_level=logging.INFO):
@@ -110,19 +125,11 @@ def setup_logging(log_dir, log_level=logging.INFO):
     logger.info(f"Log file: {log_filename}")
     return logger
 
-# --- Determine Output Directory and Setup Logging ---
-pacific_tz = pytz.timezone("America/Los_Angeles")
-timestamp = datetime.datetime.now(pacific_tz).strftime("%d_%B_%H_%M")
-OUTPUT_DIR = f"/scratch/gilbreth/wwtung/FourCastNetV2_RESULTS_2025/ZETA_INFERENCE_{timestamp}"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-LOG_DIR = os.path.join(OUTPUT_DIR, "logs")
-logger = setup_logging(LOG_DIR)
 
-logger.info(f"Using Output Directory: {OUTPUT_DIR}")
 
 # --- Load Environment Variables (optional) ---
-dotenv.load_dotenv()
-logger.info("Checked for .env file.")
+# dotenv.load_dotenv()
+# logger.info("Checked for .env file.")
 
 # --- Earth-2 MIP Imports (AFTER setting env vars and sys.path) ---
 try:
@@ -149,10 +156,6 @@ from earth2mip import (
     schema,
     time_loop,
 )
-
-# --- Core Inference Function (adapted from main_inference) ---
-# [ ... run_inference function remains the same as in your previous code ... ]
-# Ensure logger calls within run_inference use the passed 'logger' object.
 
 
 
@@ -1654,18 +1657,13 @@ def parse_date_from_filename(fname: str) -> Optional[datetime]:
 
 
 
-# --- Main Pipeline Function ---
-def main(args):
-    """Main pipeline execution function."""
 
-    logger.info("========================================================")
-    logger.info(" Starting FCNv2-SM Inference Pipeline from NumPy ICs")
-    logger.info("========================================================")
-    logger.info(f"Full command line arguments: {sys.argv}")
-    logger.info(f"Parsed arguments: {vars(args)}")
-    logger.info(f"Effective MODEL_REGISTRY: {os.environ.get('MODEL_REGISTRY', 'Not Set')}")
 
-    # --- Environment and Setup ---
+
+
+# --- Setup Function ---
+def setup_environment(args, logger):
+    """Sets up the computation device (GPU/CPU)."""
     if args.gpu >= 0 and torch.cuda.is_available():
         try:
             device = torch.device(f"cuda:{args.gpu}")
@@ -1673,31 +1671,43 @@ def main(args):
             logger.info(f"Attempting to use GPU: {args.gpu} ({torch.cuda.get_device_name(device)})")
             logger.info(f"CUDA version: {torch.version.cuda}")
             logger.info(f"PyTorch version: {torch.__version__}")
+            return device
         except Exception as e:
             logger.error(f"Failed to set CUDA device {args.gpu}: {e}. Falling back to CPU.", exc_info=True)
-            device = torch.device("cpu")
-            logger.info("Using CPU.")
+            return torch.device("cpu")
     else:
         device = torch.device("cpu")
         if args.gpu >= 0:
             logger.warning(f"GPU {args.gpu} requested, but CUDA not available. Using CPU.")
         else:
             logger.info("Using CPU.")
+        return device
 
-    # --- Load Model ---
-    model_id = "fcnv2_sm"  # Use the small version
+
+
+
+
+
+
+
+
+
+
+# --- Model Loading Function ---
+def load_model(model_id, device, logger):
+    """Loads the specified model."""
     logger.info(f"Loading {model_id} model...")
+    registry_path = os.environ.get('MODEL_REGISTRY', 'Not Set')
+    logger.info(f"Attempting to fetch model package for '{model_id}' from registry: {registry_path}")
+
     try:
-        logger.info(f"Fetching model package for '{model_id}' from registry: {os.environ.get('MODEL_REGISTRY')}")
         package = registry.get_model(model_id)
         if package is None:
-            logger.error(f"Failed to get model package for '{model_id}'. Check registry path and model name.")
-            sys.exit(1)
+            logger.error(f"Failed to get model package for '{model_id}'. Check registry path ('{registry_path}') and model name.")
+            return None # Indicate failure
         logger.info(f"Found model package: {package}. Root path: {package.root}")
 
-        # Add logging inside the load function if possible (by editing earth2mip source)
-        # or log parameters being passed here
-        logger.info(f"Calling {model_id}_load with package root: {package.root}, device: {device}, pretrained: True")
+        logger.info(f"Calling loader with package root: {package.root}, device: {device}, pretrained: True")
         model_inference = fcnv2_sm_load(package, device=device, pretrained=True)
         model_inference.eval()  # Set model to evaluation mode
 
@@ -1705,30 +1715,36 @@ def main(args):
         logger.info(f"{model_id} model loaded successfully to device: {next(model_inference.parameters()).device}.")
         logger.info(f"Model expects {len(model_inference.in_channel_names)} input channels.")
         logger.debug(f"Model input channels: {model_inference.in_channel_names}")
-        # logger.info(f"Model output channels: {model_inference.out_channel_names}") # Usually same as input
         logger.info(f"Model grid: {model_inference.grid}")
         logger.info(f"Model time step: {model_inference.time_step}")
+        return model_inference
 
     except FileNotFoundError as e:
         logger.error(f"Model loading failed: Required file not found - {e}", exc_info=True)
-        logger.error(f"Please check that weights.tar, global_means.npy, global_stds.npy exist within {os.path.join(os.environ.get('MODEL_REGISTRY'), model_id)}")
-        sys.exit(1)
+        logger.error(f"Please check that weights.tar and necessary .npy files exist within the model package directory (e.g., {os.path.join(str(registry_path), model_id)})")
+        return None
     except _pickle.UnpicklingError as e:
-        logger.error(f"Model loading failed due to UnpicklingError: {e}", exc_info=False)  # Don't need full traceback again
-        logger.error("This usually means torch.load failed with weights_only=True (default in PyTorch >= 2.6).")
-        logger.error(f"Ensure you have modified '{EARTH2MIP_PATH}/earth2mip/networks/fcnv2_sm.py' to use 'torch.load(..., weights_only=False)'.")
-        sys.exit(1)
+        logger.error(f"Model loading failed due to UnpicklingError: {e}", exc_info=False)
+        logger.error("This can happen if torch.load fails with weights_only=True (default in PyTorch >= 2.6) on older checkpoints.")
+        logger.error(f"Consider modifying the loading function (e.g., in earth2mip source) to use 'torch.load(..., weights_only=False)' if applicable.")
+        return None
     except Exception as e:
         logger.error(f"An unexpected error occurred during model loading: {e}", exc_info=True)
-        sys.exit(1)
+        return None
 
-    # --- Load Initial Conditions from NumPy file ---
-    logger.info(f"Loading initial conditions from: {args.ic_file_path}")
-    if not os.path.exists(args.ic_file_path):
-        logger.error(f"Initial condition file not found: {args.ic_file_path}")
-        sys.exit(1)
+
+
+
+# --- Initial Condition Loading Function ---
+def load_initial_conditions(ic_file_path, model_channels, model_grid, logger):
+    """Loads initial conditions from NumPy file and validates them."""
+    logger.info(f"Loading initial conditions from: {ic_file_path}")
+    if not os.path.exists(ic_file_path):
+        logger.error(f"Initial condition file not found: {ic_file_path}")
+        return None, None # Return None for data and base_date
+
     try:
-        initial_conditions_np = np.load(args.ic_file_path)
+        initial_conditions_np = np.load(ic_file_path)
         logger.info(f"Loaded NumPy data with shape: {initial_conditions_np.shape}, dtype: {initial_conditions_np.dtype}")
         # Expected shape: (num_times, num_channels, height, width)
         if initial_conditions_np.ndim != 4:
@@ -1738,54 +1754,206 @@ def main(args):
         logger.info(f"Found {num_ics} initial conditions in the file. Grid size: {height}x{width}")
 
         # Validate channel count
-        model_channels = model_inference.in_channel_names
         if num_channels != len(model_channels):
-            logger.error(f"Channel mismatch! Model expects {len(model_channels)} channels, but NumPy file has {num_channels} channels.")
-            logger.error(f"Model channels: {model_channels}")
+            logger.error(f"Channel mismatch! Model expects {len(model_channels)} channels ({model_channels}), but NumPy file has {num_channels} channels.")
             logger.error("Please ensure the NumPy file was created with the correct channels in the expected order.")
-            sys.exit(1)
+            return None, None
         else:
             logger.info("Channel count matches model requirements.")
 
         # Validate grid size (optional but good practice)
-        model_lat, model_lon = model_inference.grid.lat, model_inference.grid.lon
+        model_lat, model_lon = model_grid.lat, model_grid.lon
         if height != len(model_lat) or width != len(model_lon):
             logger.warning(f"Grid mismatch! Model grid is {len(model_lat)}x{len(model_lon)}, but NumPy file grid is {height}x{width}.")
             logger.warning("Ensure the NumPy file represents data on the model's native grid.")
             # Decide if this is critical - for now, just warn.
-            # sys.exit(1)
 
-    except Exception as e:
-        logger.error(f"Failed to load or validate NumPy file: {e}", exc_info=True)
-        sys.exit(1)
-
-    # --- Define Timestamps for the loaded ICs ---
-    # Ensure this matches the actual content and order of your .npy file
-    try:
-        # Example: Infer base date from filename if possible (adjust logic as needed)
-        fname = os.path.basename(args.ic_file_path)
-        logger.info(f"Processing initial condition file: {fname}")
-        
+        # --- Infer Base Date (moved inside after file load) ---
+        fname = os.path.basename(ic_file_path)
         try:
-            base_date = parse_date_from_filename(fname)
-            logger.info(f"Successfully parsed date: {base_date.strftime('%Y-%m-%d')}")
-        except:            
-            base_date = datetime.datetime(2020, 6, 22, tzinfo=pytz.utc)  # Make timezone aware (UTC is standard for IFS/ERA)
-            logger.warning(f"Could not infer date from filename, using default: {base_date.strftime('%Y-%m-%d')}")
+            base_date = parse_date_from_filename(fname) # Expects tz-aware datetime
+            logger.info(f"Successfully parsed base date from filename '{fname}': {base_date.strftime('%Y-%m-%d')}")
+        except ValueError as e:
+            logger.warning(f"Could not parse date from filename '{fname}': {e}. Using default date.")
+            # Default to a known reference date, ensure it's timezone-aware (UTC)
+            base_date = datetime.datetime(2020, 1, 1, tzinfo=pytz.utc)
+            logger.warning(f"Using default base date: {base_date.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        # Generate timestamps assuming 6-hourly intervals starting at 00Z
-        ic_timestamps = [base_date + datetime.timedelta(hours=i * 6) for i in range(num_ics)]
+        return initial_conditions_np, base_date
 
     except Exception as e:
-        logger.error(f"Error determining timestamps for ICs: {e}. Using generic indices.", exc_info=True)
-        ic_timestamps = list(range(num_ics))  # Fallback
+        logger.error(f"Failed to load or validate NumPy file '{ic_file_path}': {e}", exc_info=True)
+        return None, None
 
-    logger.info(f"Using the following timestamps/indices for the {num_ics} loaded ICs:")
-    for i, ts in enumerate(ic_timestamps):
-        if isinstance(ts, datetime.datetime):
-            logger.info(f"- IC {i}: {ts.isoformat()}")
+
+
+
+
+# --- Timestamp Generation Function ---
+def generate_timestamps(base_date, num_ics, logger):
+    """Generates timestamps assuming 6-hourly intervals starting from base_date."""
+    try:
+        # Generate timestamps assuming 6-hourly intervals starting at 00Z of the base_date
+        start_time = base_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        ic_timestamps = [start_time + datetime.timedelta(hours=i * 6) for i in range(num_ics)]
+        logger.info(f"Generated {len(ic_timestamps)} timestamps starting from {start_time.isoformat()}.")
+        return ic_timestamps
+    except Exception as e:
+        logger.error(f"Error generating timestamps from base date {base_date}: {e}. Using generic indices.", exc_info=True)
+        return list(range(num_ics)) # Fallback
+
+
+
+
+
+# --- Inference Loop Function ---
+def run_inference_loop(model_inference, ic_data_np, ic_timestamps, inference_config, run_output_dir, device, logger):
+    """Runs the inference loop for all loaded initial conditions."""
+    num_ics = ic_data_np.shape[0]
+    num_ics_processed = 0
+    num_ics_failed = 0
+    total_start_time = time.time()
+
+    for i, initial_time in enumerate(ic_timestamps):
+        time_label = f"Index {i}"
+        is_datetime = isinstance(initial_time, datetime.datetime)
+        if is_datetime:
+            # Ensure timezone-aware (UTC is standard for weather data) if generated correctly
+            if initial_time.tzinfo is None or initial_time.tzinfo.utcoffset(initial_time) is None:
+                 logger.warning(f"Initial time {initial_time.isoformat()} for index {i} is timezone naive. Assuming UTC.")
+                 initial_time = initial_time.replace(tzinfo=pytz.utc) # Or use datetime.timezone.utc if pytz isn't used
+            time_label = initial_time.isoformat()
         else:
-            logger.info(f"- IC {i}: Index {ts}")
+             logger.error(f"IC timestamp for index {i} is not a datetime object ({type(initial_time)}). Cannot proceed with this IC.")
+             num_ics_failed += 1
+             continue # Skip to the next IC
+
+        logger.info(f"--- Processing Initial Condition {i+1}/{num_ics}: {time_label} ---")
+
+        # Select the i-th initial condition data slice
+        ic_slice_np = ic_data_np[i]
+        try:
+            # Prepare tensor (add batch dim = 1) and ensure float type
+            initial_state_tensor = torch.from_numpy(ic_slice_np).unsqueeze(0).float()
+            logger.debug(f"Prepared initial state tensor (1, C, H, W): {initial_state_tensor.shape} for IC {time_label}")
+        except Exception as e:
+            logger.error(f"Failed to convert NumPy slice {i} ({time_label}) to tensor: {e}", exc_info=True)
+            num_ics_failed += 1
+            continue
+
+        # Run the forecast
+        start_run = time.time()
+        output_tensor = None # Ensure defined in case run_inference fails early
+        try:
+            output_tensor = run_inference(
+                model_inference=model_inference,
+                initial_state_tensor=initial_state_tensor, # Pass the (1, C, H, W) tensor
+                initial_time_dt=initial_time,            # Pass the datetime object
+                config=inference_config,
+                logger=logger,
+                # log_gpu_mem=args.debug # Optionally pass debug flag for GPU logging
+            )
+        except Exception as e:
+             logger.error(f"Unhandled exception during run_inference for IC {time_label}: {e}", exc_info=True)
+             num_ics_failed += 1
+             # Clean up tensor before continuing
+             del initial_state_tensor
+             if device.type == 'cuda': torch.cuda.empty_cache()
+             continue # Skip to next IC
+
+        end_run = time.time()
+
+        # Save output if inference was successful
+        if output_tensor is not None:
+            logger.info(f"Inference run for IC {time_label} completed in {end_run - start_run:.2f} seconds.")
+            try:
+                save_output(
+                    output_tensor=output_tensor,
+                    initial_time=initial_time, # Pass datetime for saving
+                    time_step=model_inference.time_step,
+                    channels=model_inference.in_channel_names,
+                    lat=model_inference.grid.lat,
+                    lon=model_inference.grid.lon,
+                    config=inference_config,
+                    output_dir=run_output_dir, # Use the run-specific output directory
+                    logger=logger
+                )
+                num_ics_processed += 1
+            except Exception as e:
+                 logger.error(f"Failed to save output for IC {time_label}: {e}", exc_info=True)
+                 num_ics_failed += 1
+            finally:
+                 # Clean up output tensor regardless of save success
+                 del output_tensor
+                 output_tensor = None
+        else:
+            logger.error(f"Inference failed for IC {time_label}. No output generated.")
+            num_ics_failed += 1
+
+        # Clean up input tensor and potentially GPU cache
+        del initial_state_tensor
+        if device.type == 'cuda':
+             torch.cuda.empty_cache()
+             logger.debug("Cleared CUDA cache.")
+
+    # --- Loop Summary ---
+    logger.info("--- Inference Loop Finished ---")
+    total_duration = time.time() - total_start_time
+    logger.info(f"Total processing time for {num_ics} ICs: {total_duration:.2f} seconds.")
+    logger.info(f"Successfully processed {num_ics_processed} initial conditions.")
+    if num_ics_failed > 0:
+        logger.warning(f"Failed to process {num_ics_failed} initial conditions.")
+
+    return num_ics_processed, num_ics_failed
+
+
+
+
+
+# --- Main Pipeline Function (Refactored) ---
+def run_pipeline(args, logger):
+    """Main pipeline execution function."""
+    logger.info("========================================================")
+    logger.info(" Starting FCNv2-SM Inference Pipeline from NumPy ICs")
+    logger.info("========================================================")
+    logger.info(f"Full command line arguments: {sys.argv}")
+    logger.info(f"Parsed arguments: {vars(args)}")
+    logger.info(f"Effective MODEL_REGISTRY: {os.environ.get('MODEL_REGISTRY', 'Not Set')}")
+
+    # --- Setup ---
+    device = setup_environment(args, logger)
+    model_id = "fcnv2_sm"
+
+    # --- Load Model ---
+    model_inference = load_model(model_id, device, logger)
+    if model_inference is None:
+        logger.critical("Model loading failed. Exiting pipeline.")
+        return False # Indicate failure
+
+    # --- Load Initial Conditions & Infer Base Date ---
+    initial_conditions_np, base_date = load_initial_conditions(
+        args.ic_file_path,
+        model_inference.in_channel_names,
+        model_inference.grid,
+        logger
+    )
+    if initial_conditions_np is None or base_date is None:
+        logger.critical("Loading initial conditions failed. Exiting pipeline.")
+        return False
+
+    # --- Create Run-Specific Output Directory ---
+    try:
+        base_date_str = base_date.strftime("%d_%B_%Y") # Format date as YYYYMMDD
+        run_output_dir = os.path.join(args.output_path, base_date_str)
+        os.makedirs(run_output_dir, exist_ok=True)
+        logger.info(f"Run-specific output directory created/verified: {run_output_dir}")
+    except Exception as e:
+        logger.critical(f"Failed to create run-specific output directory '{run_output_dir}': {e}", exc_info=True)
+        return False
+
+    # --- Generate Timestamps ---
+    num_ics = initial_conditions_np.shape[0]
+    ic_timestamps = generate_timestamps(base_date, num_ics, logger)
 
     # --- Prepare Inference Configuration ---
     inference_config = {
@@ -1793,121 +1961,66 @@ def main(args):
         "noise_amplitude": args.noise_amplitude,
         "simulation_length": args.simulation_length,
         "output_frequency": args.output_frequency,
-        "weather_model": model_id,  # Use the actual model ID
+        "weather_model": model_id,
         "perturbation_strategy": args.perturbation_strategy,
+        "ic_source_file": args.ic_file_path, # Add source file info
+        "base_date_used": base_date.isoformat(), # Add base date info
     }
     logger.info(f"Inference Configuration: {inference_config}")
-    logger.info(f"Output path: {args.output_path}") 
-    
-    
-    
-    # --- Run Inference for each Initial Condition ---
-    # ... (setup output_dir etc) ...
-    num_ics_processed = 0
-    num_ics_failed = 0
-    total_start_time = time.time()
+    logger.info(f"Base output path: {args.output_path}")
+    logger.info(f"Run-specific output path: {run_output_dir}")
 
-    for i, initial_time in enumerate(ic_timestamps): # initial_time is now datetime or index
-        # Ensure initial_time is a datetime object
-        if not isinstance(initial_time, datetime.datetime):
-             logger.error(f"IC timestamp for index {i} is not a datetime object ({type(initial_time)}). Cannot proceed with this IC.")
-             num_ics_failed += 1
-             continue # Skip to the next IC
-        # Ensure timezone-aware (UTC is standard for weather data)
-        if initial_time.tzinfo is None or initial_time.tzinfo.utcoffset(initial_time) is None:
-             logger.warning(f"Initial time {initial_time.isoformat()} is timezone naive. Assuming UTC.")
-             initial_time = initial_time.replace(tzinfo=pytz.utc) # Or use datetime.timezone.utc if pytz isn't used
-
-        time_label = initial_time.isoformat()
-        logger.info(f"--- Processing Initial Condition {i+1}/{num_ics}: {time_label} ---")
-
-        # Select the i-th initial condition (1, C, H, W) - already done before loop
-        ic_data_np = initial_conditions_np[i]
-        try:
-            initial_state_tensor = torch.from_numpy(ic_data_np).unsqueeze(0).float()
-            logger.debug(f"Prepared initial state tensor (1, C, H, W): {initial_state_tensor.shape}")
-        except Exception as e:
-            logger.error(f"Failed to convert NumPy slice {i} to tensor: {e}", exc_info=True)
-            num_ics_failed += 1
-            continue
-
-        # Run the forecast using the NEW run_inference signature
-        start_run = time.time()
-        output_tensor = run_inference(
-            model_inference=model_inference,
-            initial_state_tensor=initial_state_tensor, # Pass the (1, C, H, W) tensor
-            initial_time_dt=initial_time,            # <-- Pass the datetime object
-            config=inference_config,
-            logger=logger
-        )
-        end_run = time.time()
-
-        # ... (rest of the loop: saving output, clearing cache, etc.) ...
-        if output_tensor is not None:
-            logger.info(f"Inference run for IC {time_label} completed in {end_run - start_run:.2f} seconds.")
-            save_output(
-                output_tensor=output_tensor,
-                initial_time=initial_time, # Pass datetime for saving
-                time_step=model_inference.time_step,
-                channels=model_inference.in_channel_names,
-                lat=model_inference.grid.lat,
-                lon=model_inference.grid.lon,
-                config=inference_config,
-                output_dir=args.output_path,
-                logger=logger
-            )
-            num_ics_processed += 1
-        else:
-            logger.error(f"Inference failed for IC {time_label}. No output generated.")
-            num_ics_failed += 1
-
-        if device.type == 'cuda':
-             torch.cuda.empty_cache()
-             logger.debug("Cleared CUDA cache.")
-
+    # --- Run Inference Loop ---
+    success_count, failure_count = run_inference_loop(
+        model_inference,
+        initial_conditions_np,
+        ic_timestamps,
+        inference_config,
+        run_output_dir, # Pass run-specific directory
+        device,
+        logger
+    )
 
     # --- Final Summary ---
-    logger.info("--- Inference Loop Finished ---")
-    logger.info(f"Successfully processed {num_ics_processed} initial conditions.")
-    if num_ics_failed > 0:
-        logger.warning(f"Failed to process {num_ics_failed} initial conditions.")
-    logger.info(f"Output NetCDF files saved in: {args.output_path}")
-    logger.info(f"Log file saved in: {LOG_DIR}")
+    logger.info(f"Output NetCDF files saved in: {run_output_dir}") # Log run-specific dir
+    # logger.info(f"Log file saved in: {LOG_DIR}") # Assuming LOG_DIR is defined elsewhere if needed
     logger.info("========================================================")
     logger.info(" FCNv2-SM Inference Pipeline Finished ")
     logger.info("========================================================")
+    return failure_count == 0 # Return True if all successful, False otherwise
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# --- Entry Point ---
 if __name__ == "__main__":
+
+
+
+
+
+    
+    default_ic_path =  f"/scratch/gilbreth/wwtung/ARCO_73chanel_data/data/2020/June/START_22_June_2020_END_22_June_2020.npy"
+    default_output_path = f"/scratch/gilbreth/wwtung/FourCastNetV2_RESULTS_2025/"
+    
+    
+    
+    
+    
+    
+    
+    # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="FCNv2-SM Inference Pipeline using initial conditions from a NumPy file.")
 
     # Input/Output paths
-    parser.add_argument("--ic-file-path", type=str, default=f"/scratch/gilbreth/wwtung/ARCO_73chanel_data/data/2020/June/START_22_June_2020_END_22_June_2020.npy", help="Path to the NumPy file containing initial conditions (shape: T, C, H, W).")
-    # Default output path uses the dynamically generated OUTPUT_DIR
-    parser.add_argument("-o", "--output-path", type=str, default=os.path.join(OUTPUT_DIR, "saved_netcdf"), help="Directory to save output NetCDF files.")
+    # Example default IC path (adjust as necessary)
+    parser.add_argument("--ic-file-path", type=str, default=default_ic_path, help="Path to the NumPy file containing initial conditions (shape: T, C, H, W).")
+    parser.add_argument("-o", "--output-path", type=str, default=default_output_path, help="Base directory to save output NetCDF files (a subdirectory with date YYYYMMDD will be created inside).")
 
     # Inference parameters
     parser.add_argument("-sim", "--simulation-length", type=int, default=5, help="Number of autoregressive steps (forecast lead time in model steps).")
     parser.add_argument("-ef", "--output-frequency", type=int, default=1, help="Frequency (in steps) to save output states (e.g., 1 = save every step).")
-    parser.add_argument("-ens", "--ensemble-members", type=int, default=1, help="Number of ensemble members (>=1).")
+    parser.add_argument("-ens", "--ensemble-members", type=int, default=1, help="Number of ensemble members (>=1).") # Changed default to 1
     parser.add_argument("-na", "--noise-amplitude", type=float, default=0.05, help="Amplitude for perturbation noise (if ensemble_members > 1). Set to 0 for no noise.")
-    parser.add_argument("-ps", "--perturbation-strategy", type=str, default="gaussian", choices=["gaussian", "correlated", "none"], help="Perturbation strategy (currently uses Gaussian placeholder).")  # Note: 'correlated' uses gaussian placeholder here
+    parser.add_argument("-ps", "--perturbation-strategy", type=str, default="gaussian", choices=["gaussian"], help="Perturbation strategy.") # Simplified choices
 
     # System parameters
     parser.add_argument("--gpu", type=int, default=0, help="GPU ID to use (-1 for CPU).")
@@ -1915,23 +2028,40 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Ensure the main output directory exists before potentially setting logger level
+
+
+    # # --- Infer Base Date (moved inside after file load) ---
+    # fname = os.path.basename(args.ic_file_path)
+    # base_date = parse_date_from_filename(fname)
+
+
+    # --- Determine Output Directory and Setup Logging ---
+    pacific_tz = pytz.timezone("America/Los_Angeles")
+    timestamp = datetime.datetime.now(pacific_tz).strftime("%d_%B_%H_%M")
+    
+    args.output_path = f"{args.output_path}/ZETA_INFERENCE_timestamp_{timestamp}"
+    
+    # Ensure the *base* output directory exists before potentially setting logger level
     os.makedirs(args.output_path, exist_ok=True)
+    LOG_DIR = os.path.join(args.output_path, "logs")
+    logger = setup_logging(LOG_DIR)
+    logger.info(f"Using Output Directory: {args.output_path}")
+    # logger = logging.getLogger("FCNv2Inference") # Get a specific logger    
+    
 
-    # Adjust logger level if debug flag is set
-    if args.debug:
-        logger.setLevel(logging.DEBUG)
-        # Propagate debug level to handlers if needed
-        for handler in logger.handlers:
-            handler.setLevel(logging.DEBUG)
-        logger.info("Debug logging enabled.")
 
+
+
+    # --- Execute Pipeline ---
+    pipeline_successful = False
     try:
-        main(args)
+        pipeline_successful = run_pipeline(args, logger)
     except Exception as e:
-        # Use the configured logger if available
-        try:
-            logger.critical(f"Critical pipeline failure: {str(e)}", exc_info=True)
-        except NameError:  # logger might not be defined if setup failed early
-            logging.critical(f"Critical pipeline failure before logger setup: {str(e)}", exc_info=True)  # Fallback basic logging
-        sys.exit(1)
+        logger.critical(f"Critical pipeline failure in __main__: {str(e)}", exc_info=True)
+        sys.exit(1) # Exit with error code
+    finally:
+        logger.info(f"Pipeline execution finished. Success: {pipeline_successful}")
+        logging.shutdown() # Properly close log handlers
+
+    # Exit with appropriate code based on success
+    sys.exit(0 if pipeline_successful else 1)
