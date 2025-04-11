@@ -1079,159 +1079,6 @@ This revised structure provides a robust way to run the inference using the inte
 
 
 
-
-# --- Save Output Function (adapted from main_inference) ---
-# [ ... save_output function remains the same as in your previous code ... ]
-# Ensure logger calls within save_output use the passed 'logger' object.
-# def save_output(output_tensor, initial_time, time_step, channels, lat, lon, config, output_dir, logger):
-#     """Saves the forecast output tensor to a NetCDF file."""
-
-#     if output_tensor is None:
-#         logger.error("Cannot save output, tensor is None.")
-#         return
-
-#     try:
-#         # output_tensor shape: (E, T_out, C, H, W)
-#         n_ensemble, n_time_out, n_channels, n_lat, n_lon = output_tensor.shape
-#         output_freq = config.get("output_frequency", 1)
-
-#         logger.info("Preparing output for saving...")
-#         logger.debug(f"Output tensor shape: {output_tensor.shape}, dtype: {output_tensor.dtype}")
-#         logger.debug(f"Number of channels: {n_channels}, Expected channels from model: {len(channels)}")
-
-#         if n_channels != len(channels):
-#             logger.error(f"Mismatch between channels in output tensor ({n_channels}) and provided channel names ({len(channels)}). Saving with generic channel indices.")
-#             channels_coord = np.arange(n_channels)  # Use generic index if names mismatch
-#             channel_dim_name = "channel_idx"  # Use a different name to indicate mismatch
-#         else:
-#             channels_coord = channels
-#             channel_dim_name = "channel"
-
-#         # Create time coordinates
-#         time_coords = []
-#         current_time = initial_time
-#         # Add initial time (t=0)
-#         time_coords.append(current_time)
-#         # Generate forecast times
-#         for i in range(1, n_time_out):
-#             # Calculate time delta: i * output_freq * base_time_step
-#             try:
-#                 # Ensure time_step is timedelta
-#                 if not isinstance(time_step, datetime.timedelta):
-#                     logger.warning(f"Model time_step is not a timedelta ({type(time_step)}), assuming hours.")
-#                     actual_time_step = datetime.timedelta(hours=time_step)
-#                 else:
-#                     actual_time_step = time_step
-
-#                 # Time for the i-th saved output step (corresponds to model step i * output_freq)
-#                 forecast_step_number = i * output_freq
-#                 current_time = initial_time + forecast_step_number * actual_time_step
-#                 time_coords.append(current_time)
-
-#             except TypeError as te:
-#                 logger.error(f"TypeError calculating time coordinates at step {i}: {te}. Check time_step type.")
-#                 # Fallback to index if calculation fails
-#                 time_coords = np.arange(n_time_out)
-#                 break  # Stop trying to calculate time coords
-#             except Exception as e:
-#                 logger.error(f"Error calculating time coordinates at step {i}: {e}", exc_info=True)
-#                 time_coords = np.arange(n_time_out)
-#                 break
-
-#         logger.debug(f"Generated {len(time_coords)} time coordinates. First: {time_coords[0].isoformat() if time_coords else 'N/A'}, Last: {time_coords[-1].isoformat() if len(time_coords)>0 else 'N/A'}")
-#         if len(time_coords) != n_time_out:
-#             logger.warning(f"Generated {len(time_coords)} time coordinates, but expected {n_time_out}. Using indices instead.")
-#             time_coords = np.arange(n_time_out)
-
-#         # Ensure lat/lon are numpy arrays on CPU
-#         lat_np = lat.cpu().numpy() if isinstance(lat, torch.Tensor) else np.asarray(lat)
-#         lon_np = lon.cpu().numpy() if isinstance(lon, torch.Tensor) else np.asarray(lon)
-
-#         # Create DataArray
-#         logger.debug("Creating xarray DataArray...")
-#         # Check for NaNs before creating DataArray
-#         if np.isnan(output_tensor.numpy()).any():
-#             logger.warning("NaNs present in the output tensor before saving to NetCDF!")
-
-#         forecast_da = xr.DataArray(
-#             output_tensor.numpy(),  # Convert tensor to numpy array
-#             coords={
-#                 "ensemble": np.arange(n_ensemble),
-#                 "time": time_coords,
-#                 channel_dim_name: channels_coord,  # Use dynamic channel dimension name
-#                 "lat": lat_np,
-#                 "lon": lon_np,
-#             },
-#             dims=["ensemble", "time", channel_dim_name, "lat", "lon"],
-#             name="forecast",
-#             attrs={
-#                 "description": f"{config['weather_model']} ensemble forecast output",
-#                 "model": config["weather_model"],
-#                 "simulation_length_steps": config["simulation_length"],
-#                 "output_frequency_steps": output_freq,
-#                 "ensemble_members": n_ensemble,
-#                 "initial_condition_time": initial_time.isoformat(),
-#                 "time_step_seconds": actual_time_step.total_seconds() if isinstance(actual_time_step, datetime.timedelta) else "unknown",
-#                 "noise_amplitude": config["noise_amplitude"],
-#                 "perturbation_strategy": config["perturbation_strategy"],
-#                 "creation_date": datetime.datetime.now(pytz.utc).isoformat(),
-#                 "pytorch_version": torch.__version__,
-#                 "numpy_version": np.__version__,
-#                 "xarray_version": xr.__version__,
-#             },
-#         )
-#         logger.info("Created xarray DataArray.")
-
-#         # Convert to Dataset with each channel as a variable for better compatibility
-#         # Handle potential channel name issues (e.g., invalid characters for variable names)
-#         logger.debug(f"Converting DataArray to Dataset using dimension '{channel_dim_name}'...")
-#         try:
-#             forecast_ds = forecast_da.to_dataset(dim=channel_dim_name)
-#             logger.info("Converted DataArray to Dataset (channels as variables).")
-#         except Exception as e:
-#             logger.error(f"Failed to convert DataArray to Dataset (dim='{channel_dim_name}'): {e}. Saving as DataArray instead.", exc_info=True)
-#             # Fallback: save the DataArray directly if conversion fails
-#             forecast_ds = forecast_da
-
-#         # Define output filename
-#         ic_time_str = initial_time.strftime("%Y%m%d_%H%M%S")
-#         # Add ensemble size and sim length to filename for clarity
-#         output_filename = os.path.join(output_dir, f"{config['weather_model']}_ensemble{n_ensemble}_sim{config['simulation_length']}_{ic_time_str}.nc")
-
-#         # Ensure output directory exists
-#         os.makedirs(output_dir, exist_ok=True)
-
-#         logger.info(f"Saving forecast output to: {output_filename}")
-
-#         # Define encoding for compression (optional but recommended)
-#         # Apply encoding only if saving as Dataset
-#         encoding = {}
-#         if isinstance(forecast_ds, xr.Dataset):
-#             encoding = {var: {"zlib": True, "complevel": 5, "_FillValue": -9999.0} for var in forecast_ds.data_vars}  # Add FillValue
-#             logger.debug(f"Applying encoding to variables: {list(forecast_ds.data_vars.keys())}")
-#         elif isinstance(forecast_ds, xr.DataArray):
-#             encoding = {forecast_ds.name: {"zlib": True, "complevel": 5, "_FillValue": -9999.0}}
-#             logger.debug(f"Applying encoding to DataArray: {forecast_ds.name}")
-
-#         start_save = time.time()
-#         forecast_ds.to_netcdf(output_filename, encoding=encoding, engine="netcdf4")  # Specify engine
-#         end_save = time.time()
-#         # Check file size
-#         file_size_mb = os.path.getsize(output_filename) / (1024 * 1024)
-#         logger.info(f"Save complete. Time taken: {end_save - start_save:.2f} seconds. File size: {file_size_mb:.2f} MB")
-
-#     except Exception as e:
-#         logger.error(f"Failed during the save_output process: {e}", exc_info=True)
-#         # Attempt to remove potentially corrupted file
-#         if "output_filename" in locals() and os.path.exists(output_filename):
-#             try:
-#                 os.remove(output_filename)
-#                 logger.warning(f"Removed potentially corrupted file: {output_filename}")
-#             except OSError as oe:
-#                 logger.error(f"Failed to remove corrupted file {output_filename}: {oe}")
-
-
-
 """
 
 
@@ -1578,7 +1425,7 @@ def save_output(
 
 
         # --- Create xarray Object ---
-        logger.info("Creating xarray DataArray...")
+        logger.info(f"\n **** Creating xarray DataArray and saving to NetCDF  SHAPE: {data_np.shape} **** \n\n")
         forecast_da = None
         try:
             # Define coordinate names based on dimensionality
@@ -1657,17 +1504,20 @@ def save_output(
 
         # --- Define Output File Path ---
         try:
-            ic_time_str = initial_time.strftime("%Y%m%d_%H%M%S")
+            ic_time_str = initial_time.strftime("%d_%B_%Y_%H_%M")
+            #given initial_time and simulation_length (assuming every 1 step of simulation step corresponds to 6 hrs timedelta), calculate the final_end_datatime
+            final_end_datetime = initial_time + datetime.timedelta(hours=simulation_length * 6 )
+            final_end_time_str = final_end_datetime.strftime("%d_%B_%Y_%H_%M")
+
             output_filename = os.path.join(
                 output_dir,
                 f"{config.get('weather_model', 'model')}_"
-                f"E{n_ensemble}_"
-                f"T{n_time_out}_"
-                f"Sim{simulation_length}_"
-                f"{ic_time_str}.nc"
+                f"ensemble{n_ensemble}_"
+                f"simulation_length_{simulation_length}_"
+                f"START_{ic_time_str}_END_{final_end_time_str}.nc"
             )
             os.makedirs(output_dir, exist_ok=True)
-            logger.info(f"Output filename: {output_filename}")
+            logger.info(f" \n ******  SAVED_Output filename: {output_filename} ****** \n")
         except Exception as e:
             logger.error(f"Failed to create output path: {e}", exc_info=True)
             if save_object is not None: del save_object
