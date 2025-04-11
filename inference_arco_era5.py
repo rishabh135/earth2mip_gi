@@ -664,145 +664,6 @@ def run_inference(
     return final_output_tensor
 
 
-# def run_inference(
-#     model_inference,
-#     initial_state_tensor: torch.Tensor,
-#     initial_time_dt: datetime.datetime,
-#     config: dict,
-#     logger: logging.Logger,
-#     log_gpu_mem: bool = False,
-# ) -> Optional[torch.Tensor]:
-#     """
-#     Optimized and robust function to run autoregressive ensemble forecasts using TimeLoop.
-
-#     Performs initial state preparation, normalization, and perturbation on CPU
-#     to avoid GPU OOM errors with large ensemble/history states. Transfers data
-#     to GPU just before the inference loop. Includes aggressive memory management
-#     and detailed logging.
-
-#     Args:
-#         model_inference: The loaded model with a TimeLoop interface.
-#         initial_state_tensor: Initial condition tensor (1, C, H, W), expected on CPU.
-#         initial_time_dt: Timezone-aware datetime for the initial state.
-#         config: Configuration dictionary with keys like 'ensemble_members', 'simulation_length', etc.
-#         logger: Configured logger instance.
-#         log_gpu_mem: If True, logs GPU memory usage at critical points.
-
-#     Returns:
-#         Optional[torch.Tensor]: Full forecast history (E, T_out, C, H, W) on CPU if
-#                                 successful. None on failure.
-#     """
-#     overall_start_time = time.time()
-#     logger.info("=" * 50)
-#     logger.info(f"Starting run_inference for IC: {initial_time_dt.isoformat()}")
-#     logger.info("=" * 50)
-
-#     # --- Configuration Extraction ---
-#     n_ensemble = config.get("ensemble_members", 1)
-#     simulation_length = config.get("simulation_length", 0)
-#     output_freq = config.get("output_frequency", 1)
-#     noise_amp = config.get("noise_amplitude", 0.0)
-#     pert_strategy = config.get("perturbation_strategy", "gaussian")
-
-#     logger.info(f"Config - Ensemble: {n_ensemble}, Sim Length: {simulation_length}, Output Freq: {output_freq}")
-#     logger.info(f"Config - Perturbation: Amp={noise_amp:.4e}, Strategy='{pert_strategy}'")
-
-#     # --- Validation ---
-#     if initial_state_tensor.dim() != 4 or initial_state_tensor.shape[0] != 1:
-#         logger.error(f"Input IC tensor shape invalid: {initial_state_tensor.shape}. Expected (1, C, H, W).")
-#         raise ValueError("Invalid initial state tensor shape.")
-
-#     if initial_time_dt.tzinfo is None or initial_time_dt.tzinfo.utcoffset(initial_time_dt) is None:
-#         logger.warning(f"Initial time {initial_time_dt.isoformat()} is timezone naive. Assuming UTC.")
-#         initial_time_dt = initial_time_dt.replace(tzinfo=datetime.timezone.utc)
-
-#     # --- Prepare Device ---
-#     try:
-#         device = model_inference.device
-#     except AttributeError:
-#         device = next(model_inference.parameters()).device
-#         logger.warning("Device not directly available. Fetched device from model parameters.")
-
-#     logger.info(f"Running on device: {device}")
-
-#     # --- Prepare Initial State on CPU ---
-#     logger.info("Preparing initial state on CPU...")
-#     batch_tensor_4d_cpu = initial_state_tensor.repeat(n_ensemble, 1, 1, 1)
-#     initial_state_5d_cpu = batch_tensor_4d_cpu.unsqueeze(1)  # Add time dimension
-#     del batch_tensor_4d_cpu  # Free memory
-#     logger.info(f"Prepared initial state on CPU: {initial_state_5d_cpu.shape}")
-
-
-
-#     # --- Normalize on CPU ---
-#     logger.info("Normalizing initial state on CPU...")
-#     center = model_inference.center_np
-#     scale = model_inference.scale_np
-#     initial_state_norm_5d_cpu = (initial_state_5d_cpu - center.unsqueeze(1)) / scale.unsqueeze(1)
-#     del initial_state_5d_cpu, center, scale  # Free memory
-#     logger.info("Normalization completed.")
-
-
-
-
-#     # --- Apply Perturbation on CPU ---
-#     if noise_amp > 0 and n_ensemble > 1:
-#         logger.info(f"Applying perturbation noise (Amp={noise_amp:.4e}, Strategy='{pert_strategy}')")
-#         noise_cpu = torch.randn_like(initial_state_norm_5d_cpu) * noise_amp
-#         noise_cpu[0] = 0  # Ensure ensemble member 0 is deterministic
-#         initial_state_perturbed_norm_5d_cpu = initial_state_norm_5d_cpu + noise_cpu
-#         del noise_cpu  # Free memory
-#     else:
-#         logger.info("No perturbation noise applied.")
-#         initial_state_perturbed_norm_5d_cpu = initial_state_norm_5d_cpu
-
-#     del initial_state_norm_5d_cpu  # Free memory
-#     logger.info(f"Perturbation completed. Shape: {initial_state_perturbed_norm_5d_cpu.shape}")
-
-#     # --- Transfer to GPU ---
-#     logger.info("Transferring initial state to GPU...")
-#     initial_state_perturbed_norm_5d_gpu = initial_state_perturbed_norm_5d_cpu.to(device)
-#     del initial_state_perturbed_norm_5d_cpu  # Free memory
-#     logger.info("Transfer to GPU completed.")
-
-#     # --- Initialize TimeLoop Iterator ---
-#     logger.info("Initializing TimeLoop iterator...")
-#     iterator = model_inference(time=initial_time_dt, x=initial_state_perturbed_norm_5d_gpu)
-#     del initial_state_perturbed_norm_5d_gpu  # Free memory
-#     logger.info("TimeLoop iterator initialized.")
-
-#     # --- Main Loop ---
-#     output_tensors = []
-#     inference_times = []
-#     try:
-#         for step_idx in range(simulation_length + 1):
-#             step_start_time = time.time()
-#             time_out, data_gpu, _ = next(iterator)
-#             data_cpu = data_gpu.cpu()  # Move data to CPU
-#             output_tensors.append(data_cpu)
-#             del data_gpu  # Free memory
-#             step_end_time = time.time()
-#             inference_times.append(step_end_time - step_start_time)
-
-#             if step_idx % output_freq == 0:
-#                 logger.info(f"Step {step_idx}: Time={time_out.isoformat()}, Output Shape={data_cpu.shape}")
-
-#     except StopIteration:
-#         logger.warning("TimeLoop iterator stopped prematurely.")
-#     except Exception as e:
-#         logger.error(f"Error during TimeLoop iteration: {e}", exc_info=True)
-#         return None
-
-#     # --- Combine Outputs ---
-#     logger.info("Combining collected outputs...")
-#     final_output_tensor = torch.stack(output_tensors, dim=1)
-#     logger.info(f"Final output tensor shape: {final_output_tensor.shape}")
-
-#     return final_output_tensor
-
-
-
-
 
 """
 
@@ -1583,20 +1444,108 @@ def save_output(
 
 
 
-def parse_date_from_filename(fname: str) -> Optional[datetime]:
+# def parse_date_from_filename(fname: str) -> Optional[datetime]:
+#     """
+#     Robustly extracts the start date from a filename with the pattern:
+#     START_<day>_<month>_<year>_END_...npy
+    
+#     Args:
+#         fname: Full file path containing the date pattern
+        
+#     Returns:
+#         datetime object representing the parsed date
+        
+#     Raises:
+#         ValueError: If date cannot be parsed from the filename
+#     """
+#     # Predefined month mapping for case-insensitive lookup
+#     MONTH_MAP = {
+#         'january': 1, 'february': 2, 'march': 3, 'april': 4,
+#         'may': 5, 'june': 6, 'july': 7, 'august': 8,
+#         'september': 9, 'october': 10, 'november': 11, 'december': 12
+#     }
+
+#     # Extract basename and handle empty/malformed paths
+#     basename = os.path.basename(fname)
+#     if not basename:
+#         raise ValueError("Invalid filename path structure")
+
+#     # Robust regex pattern with multiple validation checks
+#     pattern = re.compile(
+#         r"""
+#         START_                     # Start marker
+#         (?P<day>\d{1,2})           # Day (1-31)
+#         _                          
+#         (?P<month>[A-Za-z]+)       # Month name
+#         _                          
+#         (?P<year>\d{4})            # Year (4 digits)
+#         (?=_END)                   # Positive lookahead for _END
+#         """, 
+#         re.VERBOSE | re.IGNORECASE
+#     )
+
+#     match = pattern.search(basename)
+#     if not match:
+#         raise ValueError(f"Date pattern not found in filename: {basename}")
+
+#     try:
+#         # Extract and normalize components
+#         day = int(match.group('day'))
+#         month_str = match.group('month').lower()
+#         year = int(match.group('year'))
+        
+#         # Validate month
+#         month = MONTH_MAP.get(month_str)
+#         if not month:
+#             raise ValueError(f"Invalid month name: {match.group('month')}")
+
+#         # Validate date components
+#         if not (1 <= day <= 31):
+#             raise ValueError(f"Day out of range: {day}")
+#         if not (1900 <= year <= 2100):
+#             raise ValueError(f"Year out of reasonable range: {year}")
+
+#         # Construct and validate actual date
+#         date_obj = datetime(year, month, day)
+#         return date_obj
+
+#     except ValueError as e:
+#         raise ValueError(f"Invalid date components in filename: {str(e)}") from e
+#     except Exception as e:
+#         raise ValueError(f"Unexpected error parsing date: {str(e)}") from e
+
+
+
+
+
+
+
+
+
+
+
+
+def parse_date_from_filename(fname: str, logger: logging.Logger) -> Optional[datetime.datetime]:
     """
     Robustly extracts the start date from a filename with the pattern:
     START_<day>_<month>_<year>_END_...npy
-    
+    Provides detailed logging for debugging.
+
     Args:
-        fname: Full file path containing the date pattern
-        
+        fname (str): Full file path or filename containing the date pattern.
+        logger (logging.Logger): Logger instance for detailed output.
+
     Returns:
-        datetime object representing the parsed date
-        
+        datetime.datetime: Timezone-aware datetime object (UTC) representing the parsed date,
+                           or None if parsing fails.
+
     Raises:
-        ValueError: If date cannot be parsed from the filename
+        ValueError: If the input filename is invalid or the pattern is fundamentally wrong
+                    (to be caught by the caller). Specific parsing errors are logged
+                    and result in a None return.
     """
+    logger.debug(f"Attempting to parse date from filename: '{fname}'")
+
     # Predefined month mapping for case-insensitive lookup
     MONTH_MAP = {
         'january': 1, 'february': 2, 'march': 3, 'april': 4,
@@ -1605,54 +1554,83 @@ def parse_date_from_filename(fname: str) -> Optional[datetime]:
     }
 
     # Extract basename and handle empty/malformed paths
+    if not fname or not isinstance(fname, str):
+        logger.error("Invalid input: fname is None, empty, or not a string.")
+        raise ValueError("Invalid filename input.") # Raise for invalid input
+
     basename = os.path.basename(fname)
     if not basename:
-        raise ValueError("Invalid filename path structure")
+        logger.error(f"Could not extract basename from fname: '{fname}'")
+        raise ValueError("Invalid filename path structure resulted in empty basename.")
 
-    # Robust regex pattern with multiple validation checks
+    logger.debug(f"Extracted basename: '{basename}'")
+
+    # Robust regex pattern (same as before, looks good)
     pattern = re.compile(
         r"""
         START_                     # Start marker
         (?P<day>\d{1,2})           # Day (1-31)
-        _                          
+        _
         (?P<month>[A-Za-z]+)       # Month name
-        _                          
+        _
         (?P<year>\d{4})            # Year (4 digits)
-        (?=_END)                   # Positive lookahead for _END
-        """, 
+        (?=_END)                   # Positive lookahead for _END (requires _END to follow)
+        """,
         re.VERBOSE | re.IGNORECASE
     )
 
     match = pattern.search(basename)
     if not match:
-        raise ValueError(f"Date pattern not found in filename: {basename}")
+        logger.warning(f"Date pattern 'START_DD_Month_YYYY_END' not found in basename: '{basename}'. Cannot parse date.")
+        return None # Return None if pattern doesn't match
+
+    logger.debug(f"Regex matched successfully. Groups: {match.groupdict()}")
 
     try:
-        # Extract and normalize components
-        day = int(match.group('day'))
-        month_str = match.group('month').lower()
-        year = int(match.group('year'))
-        
-        # Validate month
-        month = MONTH_MAP.get(month_str)
-        if not month:
-            raise ValueError(f"Invalid month name: {match.group('month')}")
+        # Extract components
+        day_str = match.group('day')
+        month_str_orig = match.group('month') # Keep original case for logging
+        year_str = match.group('year')
 
-        # Validate date components
+        # Validate and convert day
+        day = int(day_str)
         if not (1 <= day <= 31):
-            raise ValueError(f"Day out of range: {day}")
-        if not (1900 <= year <= 2100):
-            raise ValueError(f"Year out of reasonable range: {year}")
+            # This check is slightly redundant as datetime.datetime will catch it,
+            # but good for early explicit logging.
+            logger.error(f"Parsed day '{day}' is outside the valid range (1-31).")
+            return None
 
-        # Construct and validate actual date
-        date_obj = datetime(year, month, day)
+        # Validate and convert month
+        month_str_lower = month_str_orig.lower()
+        month = MONTH_MAP.get(month_str_lower)
+        if not month:
+            logger.error(f"Parsed month name '{month_str_orig}' is not a valid month.")
+            return None
+
+        # Validate and convert year
+        year = int(year_str)
+        # Relaxed year range slightly, adjust if needed
+        if not (1900 <= year <= 2200):
+            logger.error(f"Parsed year '{year}' is outside the typical expected range (1900-2200).")
+            return None
+
+        logger.debug(f"Parsed components: Day={day}, Month={month}({month_str_orig}), Year={year}")
+
+        # *** THE CORE FIX ***
+        # Construct and validate actual date using datetime.datetime class
+        # Make it timezone-aware using pytz.utc
+        date_obj = datetime.datetime(year, month, day, tzinfo=pytz.utc)
+        logger.info(f"Successfully parsed date: {date_obj.strftime('%d_%B_%Y_%H_%M_%Z')}")
         return date_obj
 
     except ValueError as e:
-        raise ValueError(f"Invalid date components in filename: {str(e)}") from e
+        # Catches errors from int() conversion or invalid date in datetime.datetime()
+        logger.error(f"Invalid date components encountered while parsing '{basename}': {e}", exc_info=True)
+        return None
     except Exception as e:
-        raise ValueError(f"Unexpected error parsing date: {str(e)}") from e
-
+        # Catch any other unexpected errors during parsing
+        logger.error(f"An unexpected error occurred parsing date components from '{basename}': {e}", exc_info=True)
+        return None
 
 
 
@@ -1771,12 +1749,12 @@ def load_initial_conditions(ic_file_path, model_channels, model_grid, logger):
         # --- Infer Base Date (moved inside after file load) ---
         fname = os.path.basename(ic_file_path)
         try:
-            base_date = parse_date_from_filename(fname) # Expects tz-aware datetime
-            logger.info(f"Successfully parsed base date from filename '{fname}': {base_date.strftime('%Y-%m-%d')}")
+            base_date = parse_date_from_filename(fname, logger) # Expects tz-aware datetime
+            logger.info(f"Successfully parsed base date from filename '{fname}': {base_date.strftime('%d_%B_%Y')}")
         except ValueError as e:
             logger.warning(f"Could not parse date from filename '{fname}': {e}. Using default date.")
             # Default to a known reference date, ensure it's timezone-aware (UTC)
-            base_date = datetime.datetime(2020, 1, 1, tzinfo=pytz.utc)
+            base_date = datetime.datetime(2020, 6, 18, tzinfo=pytz.utc)
             logger.warning(f"Using default base date: {base_date.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         return initial_conditions_np, base_date
@@ -1995,17 +1973,9 @@ if __name__ == "__main__":
 
 
 
-
-
-    
-    default_ic_path =  f"/scratch/gilbreth/wwtung/ARCO_73chanel_data/data/2020/June/START_22_June_2020_END_22_June_2020.npy"
+    # default_ic_path =  f"/scratch/gilbreth/wwtung/ARCO_73chanel_data/data/2020/June/START_22_June_2020_END_22_June_2020.npy"
     default_output_path = f"/scratch/gilbreth/wwtung/FourCastNetV2_RESULTS_2025/"
-    
-    
-    
-    
-    
-    
+    default_ic_path =  f"/scratch/gilbreth/wwtung/ARCO_73chanel_data/data/2020/June/START_18_June_2020_END_18_June_2020.npy"
     
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="FCNv2-SM Inference Pipeline using initial conditions from a NumPy file.")
@@ -2016,7 +1986,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output-path", type=str, default=default_output_path, help="Base directory to save output NetCDF files (a subdirectory with date YYYYMMDD will be created inside).")
 
     # Inference parameters
-    parser.add_argument("-sim", "--simulation-length", type=int, default=5, help="Number of autoregressive steps (forecast lead time in model steps).")
+    parser.add_argument("-sim", "--simulation-length", type=int, default=60, help="Number of autoregressive steps (forecast lead time in model steps).")
     parser.add_argument("-ef", "--output-frequency", type=int, default=1, help="Frequency (in steps) to save output states (e.g., 1 = save every step).")
     parser.add_argument("-ens", "--ensemble-members", type=int, default=1, help="Number of ensemble members (>=1).") # Changed default to 1
     parser.add_argument("-na", "--noise-amplitude", type=float, default=0.05, help="Amplitude for perturbation noise (if ensemble_members > 1). Set to 0 for no noise.")
@@ -2030,9 +2000,9 @@ if __name__ == "__main__":
 
 
 
-    # # --- Infer Base Date (moved inside after file load) ---
+    # # # --- Infer Base Date (moved inside after file load) ---
     # fname = os.path.basename(args.ic_file_path)
-    # base_date = parse_date_from_filename(fname)
+    # base_date = parse_date_from_filename(fname, logger)
 
 
     # --- Determine Output Directory and Setup Logging ---
